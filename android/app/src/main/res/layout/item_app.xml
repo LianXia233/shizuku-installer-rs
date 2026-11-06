@@ -7,8 +7,8 @@
     android:background="@drawable/bg_chip"
     android:paddingStart="12dp"
     android:paddingEnd="8dp"
-    android:paddingTop="10dp"
-    android:paddingBottom="10dp"
+    android:paddingTop="9dp"
+    android:paddingBottom="9dp"
     android:layout_marginBottom="6dp">
 
     <LinearLayout
@@ -38,14 +38,36 @@
             android:layout_marginTop="2dp" />
     </LinearLayout>
 
+    <!-- 已授权标记：只有被勾选的应用才显示 -->
+    <TextView
+        android:id="@+id/itemAppAllowed"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/auth_tag_allowed"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:textColor="@color/success"
+        android:background="@drawable/bg_tag_allowed"
+        android:paddingStart="7dp"
+        android:paddingEnd="7dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp"
+        android:layout_marginEnd="6dp"
+        android:visibility="gone" />
+
+    <!-- 系统 / 用户应用徽章，配色区分 -->
     <TextView
         android:id="@+id/itemAppTag"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textSize="10sp"
+        android:textStyle="bold"
         android:textColor="@color/text_secondary"
-        android:paddingStart="6dp"
-        android:paddingEnd="6dp"
+        android:background="@drawable/bg_tag_user"
+        android:paddingStart="7dp"
+        android:paddingEnd="7dp"
+        android:paddingTop="3dp"
+        android:paddingBottom="3dp"
         android:layout_marginEnd="6dp" />
 
     <Switch

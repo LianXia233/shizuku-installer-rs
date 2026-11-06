@@ -105,7 +105,7 @@ final class StagedFiles {
         os.flush();
     }
 
-    /** 保留原始扩展名：Rust 侧用 displayName 判定 apk / apks / xapk。 */
+    /** 保留原始扩展名：Rust 侧用 displayName 判定 apk / apks / xapk / apkm。 */
     private static String safeName(String raw) {
         String s = raw == null ? "" : raw.trim();
         int slash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
@@ -118,7 +118,8 @@ final class StagedFiles {
         }
         String low = s.toLowerCase(Locale.ROOT);
         if (!(low.endsWith(".apk") || low.endsWith(".apks")
-                || low.endsWith(".xapk") || low.endsWith(".zip"))) {
+                || low.endsWith(".xapk") || low.endsWith(".apkm")
+                || low.endsWith(".zip"))) {
             s = s + ".apk";
         }
         if (s.isEmpty() || s.startsWith(".")) {

@@ -4,14 +4,14 @@
     <string name="app_tagline">Shizuku 授权 · Rust 核心</string>
     <string name="header_subtitle">静默安装 · 无需确认 · 后台完成</string>
     <string name="settings_title">设置</string>
-    <string name="settings_subtitle">静默安装授权与安装行为</string>
+    <string name="settings_subtitle">授权、安装行为与应用管理</string>
+    <string name="settings_back">返回</string>
 
     <string name="section_service">服务状态</string>
     <string name="section_install">安装</string>
-    <string name="section_install_hint">支持 APK / 多 split / APKS / XAPK，后台静默完成</string>
+    <string name="section_install_hint">支持 APK / 多 split / APKS / XAPK / APKM / ZIP，后台静默完成</string>
     <string name="section_manage">卸载与启动</string>
     <string name="section_quick">快捷入口</string>
-    <string name="section_log">本次执行日志</string>
     <string name="footer">Rust core · Shizuku API 13 · targetSdk 36</string>
 
     <string name="status_title">Shizuku 状态</string>
@@ -26,14 +26,28 @@
     <string name="btn_settings">设置</string>
     <string name="btn_logs">安装日志</string>
     <string name="btn_launch">启动应用</string>
-    <string name="btn_copy_log">复制日志</string>
+    <string name="btn_about">关于</string>
 
-    <string name="opt_confirm">安装前确认（默认关闭，静默执行）</string>
+    <string name="about_title">关于</string>
+    <string name="about_back">返回</string>
+    <string name="about_version">版本 %1$s</string>
+    <string name="about_desc">基于 Rust 核心与 Shizuku 权限实现的 Android 静默安装器。安装包由调用方交给本应用后，在后台线程通过 Shizuku 的 shell 身份执行 pm install，全程不弹确认框、不跳转应用界面，进度与结果通过通知与安装日志反馈。</string>
+    <string name="about_repo_label">开源仓库</string>
+    <string name="about_repo_url">https://github.com/LianXia233/shizuku-installer-rs</string>
+    <string name="about_repo_hint">点击在浏览器中打开，可查看源码、提交记录与版本发布</string>
+    <string name="about_dev_label">开发者</string>
+    <string name="about_dev_name">LianXia233 · 独立开发与维护</string>
+    <string name="about_license_label">开源许可</string>
+    <string name="about_license_desc">本项目以 GNU General Public License v3.0 发布。你可以自由使用、修改与再分发，但衍生作品须同样以 GPL-3.0 开源，并保留原作者署名与许可声明。完整条款见仓库根目录的 LICENSE 文件。</string>
+    <string name="about_deps">依赖与致谢：Rust 标准库与 serde；Shizuku API（RikkaApps，Apache-2.0）提供 shell 权限通道；Android SDK 与 Gradle 构建工具链。</string>
+    <string name="about_footer">Shizuku Installer · Rust core · GPL-3.0</string>
+
+    <string name="opt_confirm">安装前确认</string>
+    <string name="opt_confirm_hint">默认关闭，直接静默执行</string>
     <string name="opt_delete_after">成功后删除安装包</string>
     <string name="opt_downgrade">允许降级安装</string>
 
     <string name="log_title">执行日志</string>
-    <string name="log_empty">尚无操作记录。</string>
 
     <string name="logs_title">安装日志</string>
     <string name="logs_subtitle">每一次静默安装与卸载都会自动记录</string>
@@ -62,12 +76,16 @@
     <string name="allow_remove">移除</string>
 
     <!-- 静默安装授权 -->
-    <string name="auth_card_title">静默安装授权</string>
-    <string name="auth_card_desc">只有被允许的应用才能直接发起静默安装；首次调用会弹窗询问，不会让任意软件都能直接安装。</string>
-    <string name="opt_caller_auth">外部调用需授权（推荐开启）</string>
-    <string name="opt_floating">安装时显示左上角悬浮指示器（系统悬浮窗，不遮挡屏幕）</string>
-    <string name="opt_fallback">静默失败后提供「改用系统安装器」通知（默认不弹界面）</string>
-    <string name="opt_auto_open">失败时自动打开系统安装器（会打断当前操作，默认关闭）</string>
+    <string name="auth_card_title">授权与安装行为</string>
+    <string name="auth_card_desc">只有被允许的应用才能直接发起静默安装；首次调用会直接在当前应用上方弹出授权卡片，不必切回本应用。</string>
+    <string name="opt_caller_auth">外部调用需授权</string>
+    <string name="opt_caller_auth_hint">推荐开启 · 未授权来源首次调用会当场询问</string>
+    <string name="opt_floating">安装进度悬浮指示器</string>
+    <string name="opt_floating_hint">左上角小圆点，不遮挡屏幕、不抢焦点</string>
+    <string name="opt_fallback">失败时提供系统安装器入口</string>
+    <string name="opt_fallback_hint">默认只发通知，点按后才打开系统安装器</string>
+    <string name="opt_auto_open">失败时自动打开系统安装器</string>
+    <string name="opt_auto_open_hint">会打断当前操作，默认关闭</string>
     <string name="auto_open_title">会打断当前操作</string>
     <string name="auto_open_warn">开启后，静默安装失败时会自动弹出系统安装界面：它会覆盖当前应用、把状态栏与导航栏变黑，并需要按返回或手动确认才能继续操作。默认关闭时只发一条通知，点击才进入系统安装器。</string>
     <string name="auto_open_keep">仍然开启</string>
@@ -80,10 +98,16 @@
     <string name="auth_revoke_all">全部取消</string>
     <string name="auth_loading">正在读取应用列表…</string>
     <string name="auth_no_match">没有匹配的应用</string>
+    <string name="auth_empty_filter">该分类下没有应用</string>
     <string name="auth_tag_system">系统</string>
     <string name="auth_tag_user">用户</string>
-    <string name="auth_allowed_count">已授权 %1$d 个应用</string>
+    <string name="auth_tag_allowed">已授权</string>
+    <string name="auth_system_tip">系统应用由设备预置，授权与卸载都请谨慎操作</string>
+    <string name="auth_allowed_count">已授权 %1$d 个 · 共 %2$d 个应用</string>
     <string name="auth_toggle_failed">设置失败，请重试</string>
+    <string name="filter_all">全部</string>
+    <string name="filter_user">用户应用</string>
+    <string name="filter_system">系统应用</string>
 
     <string name="advanced_title">高级：免确认包名白名单</string>
     <string name="advanced_expand">展开</string>
@@ -95,6 +119,9 @@
     <string name="auth_dialog_install">%1$s 请求通过本应用静默安装 APK。未授权的来源无法在后台安装应用。</string>
     <string name="auth_dialog_uninstall">%1$s 请求通过本应用静默卸载应用。</string>
     <string name="auth_remember">记住本次选择（之后不再询问）</string>
+    <string name="auth_remember_anonymous">匿名来源无法被记住，每次调用都会询问</string>
+    <string name="auth_overlay_hint">此卡片浮在当前应用之上，不会切换应用或遮挡屏幕；卡片外区域仍可正常操作</string>
+    <string name="auth_overlay_allow_once">仅允许本次</string>
     <string name="auth_deny">拒绝</string>
     <string name="auth_allow">允许</string>
     <string name="auth_denied">已阻止 %1$s 的静默安装请求</string>
@@ -118,11 +145,25 @@
     <string name="dialog_uninstall_hint">输入包名</string>
     <string name="dialog_uninstall_btn">卸载</string>
     <string name="dialog_keep_data">保留数据与缓存</string>
-
-    <string name="copied">已复制到剪贴板</string>
     <string name="no_launcher_package">请先完成一次安装</string>
     <string name="notify_channel">安装结果</string>
     <string name="notify_channel_desc">安装与卸载的结果通知</string>
+
+    <!-- 卸载：应用列表选择器 -->
+    <string name="picker_title">选择要卸载的应用</string>
+    <string name="picker_subtitle">从已安装应用中选择，支持按系统 / 用户应用筛选</string>
+    <string name="picker_search_hint">搜索应用名称或包名</string>
+    <string name="picker_loading">正在读取应用列表…</string>
+    <string name="picker_no_match">没有匹配的应用</string>
+    <string name="picker_manual">输入包名</string>
+    <string name="picker_confirm_title">卸载 %1$s？</string>
+    <string name="picker_confirm_msg">包名：%1$s%2$s卸载后将无法直接恢复。</string>
+    <string name="picker_confirm_system">\n这是系统预置应用，卸载可能失败或影响系统功能。</string>
+    <string name="picker_confirm_user">\n这是用户安装的应用。</string>
+    <string name="picker_tag_system">系统应用</string>
+    <string name="picker_tag_user">用户应用</string>
+    <string name="picker_submitted">正在卸载 %1$s</string>
+    <string name="picker_back">返回</string>
 
     <string name="notify_channel_progress">安装进度</string>
     <string name="notify_channel_progress_desc">静默安装过程中的实时进度提示</string>

@@ -43,12 +43,17 @@ pub fn is_valid_package_name(s: &str) -> bool {
 }
 
 /// 把 SAF 提供的显示名推导为输入类型。
+///
+/// 归档类（apks / xapk / apkm / zip）都按 zip 处理：内部只挑 `.apk` 条目，
+/// `base.apk` 优先，因此不同发行渠道的打包格式可以共用一条解析路径。
 pub fn kind_of(display_name: &str) -> &'static str {
     let n = display_name.to_ascii_lowercase();
     if n.ends_with(".apks") {
         "apks"
     } else if n.ends_with(".xapk") || n.ends_with(".akp") {
         "xapk"
+    } else if n.ends_with(".apkm") || n.ends_with(".apkmx") {
+        "apkm"
     } else if n.ends_with(".apk") {
         "apk"
     } else if n.ends_with(".zip") {
@@ -56,6 +61,11 @@ pub fn kind_of(display_name: &str) -> &'static str {
     } else {
         "unknown"
     }
+}
+
+/// 是否为可安装的输入类型（供 UI 侧做早失败提示，不做策略判断）。
+pub fn is_installable_kind(kind: &str) -> bool {
+    matches!(kind, "apk" | "apks" | "xapk" | "apkm" | "zip")
 }
 
 /// 生成合法的 split 名，避免路径分隔符与冲突。

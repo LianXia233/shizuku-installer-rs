@@ -27,6 +27,8 @@ final class SilentTask implements Runnable {
     private final Context app;
     private final boolean uninstall;
     private final List<String> uris;
+    /** 调用方给的原始 URI：仅用于「安装成功后删除安装包」，不参与写入。 */
+    private final List<String> sources;
     private final String targetPackage;
     private final String caller;
     private volatile String label;
@@ -34,23 +36,28 @@ final class SilentTask implements Runnable {
     private boolean fallback = true;
     /** 默认不自动弹系统安装器界面，避免遮挡前台应用（见 model.rs 注释）。 */
     private boolean autoOpen = false;
+    private boolean deleteAfter = false;
+    private boolean allowDowngrade = false;
 
-    private SilentTask(Context app, boolean uninstall, List<String> uris,
+    private SilentTask(Context app, boolean uninstall, List<String> uris, List<String> sources,
                        String targetPackage, String caller, String label) {
         this.app = app;
         this.uninstall = uninstall;
         this.uris = uris;
+        this.sources = sources;
         this.targetPackage = targetPackage;
         this.caller = caller;
         this.label = label == null || label.trim().isEmpty() ? "安装包" : label.trim();
     }
 
-    static SilentTask install(Context c, List<String> uris, String caller, String label) {
-        return new SilentTask(c.getApplicationContext(), false, uris, null, caller, label);
+    static SilentTask install(Context c, List<String> uris, List<String> sources,
+                              String caller, String label) {
+        return new SilentTask(c.getApplicationContext(), false, uris, sources, null, caller, label);
     }
 
     static SilentTask uninstall(Context c, String pkg, String caller) {
-        return new SilentTask(c.getApplicationContext(), true, null, pkg, caller, pkg);
+        return new SilentTask(c.getApplicationContext(), true, new java.util.ArrayList<>(),
+                new java.util.ArrayList<>(), pkg, caller, pkg);
     }
 
     @Override
@@ -83,6 +90,8 @@ final class SilentTask implements Runnable {
                 floating = cfg.optBoolean("floatingIndicator", true);
                 fallback = cfg.optBoolean("fallbackToSystemInstaller", true);
                 autoOpen = cfg.optBoolean("autoOpenSystemInstaller", false);
+                deleteAfter = cfg.optBoolean("deleteApkAfterInstall", false);
+                allowDowngrade = cfg.optBoolean("allowDowngrade", false);
             }
         } catch (Throwable ignored) {
             // 配置读取失败时保持默认：显示指示器、只发降级通知，绝不自动弹界面
@@ -166,6 +175,7 @@ final class SilentTask implements Runnable {
             String raw = outcome == null ? "" : outcome.optString("raw", "");
             String code = outcome == null ? "" : outcome.optString("code", "");
             if (ok) {
+                afterSuccess();
                 Notifier.finish(app, label, false, true, "", safePkg(pkg));
             } else {
                 finishFailure(AppNames.errorText(app, code, raw));
@@ -356,9 +366,76 @@ final class SilentTask implements Runnable {
         return new JSONObject()
                 .put("replace", true)
                 .put("grantRuntimePermissions", true)
-                .put("allowDowngrade", false)
+                .put("allowDowngrade", allowDowngrade)
                 .put("deleteSourceAfter", false)
                 .put("skipConfirm", true);
+    }
+
+    /**
+     * 安装成功后的收尾。
+     *
+     * 1. 永远清理本应用缓存里的私有副本（staged），装完就没用了；
+     * 2. 「成功后删除安装包」开启时，再删调用方给的原始文件。
+     *
+     * 原始 URI 通常只有读权限，ContentResolver.delete 会被拒；因此
+     * {@link ShizukuBridge} 的 deleteSource 在失败后会解析真实路径并用
+     * shell 身份 rm —— 这才是用户开关真正生效的关键。
+     */
+    private void afterSuccess() {
+        try {
+            ShizukuBridge.call("cleanupStaged", "{}");
+        } catch (Throwable ignored) {
+        }
+        if (!deleteAfter) {
+            return;
+        }
+        List<String> targets = new java.util.ArrayList<>();
+        if (sources != null) {
+            targets.addAll(sources);
+        }
+        if (targets.isEmpty() && uris != null) {
+            targets.addAll(uris);
+        }
+        int deleted = 0;
+        int failed = 0;
+        for (String u : targets) {
+            boolean ok = false;
+            try {
+                String resp = ShizukuBridge.call("deleteSource",
+                        new JSONObject().put("uri", u).toString());
+                JSONObject o = resp == null ? null : new JSONObject(resp);
+                ok = o != null && o.optBoolean("deleted", false);
+            } catch (Throwable ignored) {
+            }
+            if (ok) {
+                deleted++;
+            } else {
+                failed++;
+            }
+        }
+        recordDelete(deleted, failed);
+    }
+
+    /** 无论删除成败都写一条日志：这是用户可验证的唯一凭据。 */
+    private void recordDelete(int deleted, int failed) {
+        try {
+            JSONObject e = new JSONObject()
+                    .put("op", "install")
+                    .put("label", label)
+                    .put("appName", label)
+                    .put("source", "silent")
+                    .put("ok", failed == 0)
+                    .put("code", failed == 0 ? "DELETE_OK" : "DELETE_PARTIAL")
+                    .put("detail", failed == 0
+                            ? "安装成功，已删除安装包 " + deleted + " 个"
+                            : "安装成功，已删除 " + deleted + " 个，另有 " + failed
+                                    + " 个无法删除（只读目录或权限受限）");
+            if (caller != null && !caller.isEmpty()) {
+                e.put("caller", caller);
+            }
+            call("logRecord", e.toString());
+        } catch (Throwable ignored) {
+        }
     }
 
     private JSONObject outcomeOf(JSONObject r) {

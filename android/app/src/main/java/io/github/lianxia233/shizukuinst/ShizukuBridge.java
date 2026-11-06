@@ -424,6 +424,18 @@ public final class ShizukuBridge {
         return new JSONObject().put("hex", hex.toString());
     }
 
+    /**
+     * 删除安装包（「安装成功后删除安装包」开关的唯一执行点）。
+     *
+     * 顺序：
+     *  1. DocumentsContract.deleteDocument —— 只在调用方给了写权限时才成功，
+     *     而「打开方式 / 分享」进来的 URI 通常只有读权限；
+     *  2. ContentResolver.delete —— 同上，多数情况被 SecurityException 拒绝；
+     *  3. 解析真实路径并用 shell 身份 rm —— 这一步才是开关真正生效的原因。
+     *     走 argv 数组（不经 shell 拼接），路径不可能被注入成命令。
+     *
+     * 返回值始终带 {@code path}，方便日志里看清「删的是哪个文件」。
+     */
     private static JSONObject deleteSource(JSONObject a) throws Exception {
         Uri uri = Uri.parse(a.getString("uri"));
         boolean deleted = false;
@@ -437,7 +449,39 @@ public final class ShizukuBridge {
             } catch (Throwable ignored) {
             }
         }
-        return new JSONObject().put("deleted", deleted);
+        String path = deleted ? "" : filePathOf(uri);
+        if (!deleted && path != null && !path.isEmpty()) {
+            deleted = shellDelete(path);
+        }
+        return new JSONObject().put("deleted", deleted).put("path", path == null ? "" : path);
+    }
+
+    /** 从 SAF / MediaStore 的 _data 列解析真实路径；拿不到返回 null。 */
+    private static String filePathOf(Uri uri) {
+        if ("file".equals(uri.getScheme())) {
+            return uri.getPath();
+        }
+        try (Cursor c = resolver().query(uri, new String[]{"_data"}, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) {
+                return c.getString(0);
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    /** 以 shell 身份 rm -f；只接受绝对路径。 */
+    private static boolean shellDelete(String path) {
+        if (path == null || !path.startsWith("/")) {
+            return false;
+        }
+        try {
+            JSONArray argv = new JSONArray().put("rm").put("-f").put(path);
+            JSONObject o = exec(new JSONObject().put("argv", argv));
+            return o.optInt("code", -1) == 0;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /**

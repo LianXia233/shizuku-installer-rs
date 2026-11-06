@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
@@ -11,6 +12,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.provider.OpenableColumns;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -21,6 +23,7 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 外部「打开方式 / 分享 / 安装 / 卸载」意图的入口。
@@ -52,6 +55,8 @@ import java.util.List;
 public final class SilentInstallActivity extends Activity {
     private static final String TAG = "SilentEntry";
     static final String EXTRA_URIS = "staged_uris";
+    /** 调用方给的原始 URI（删除安装包用），与 EXTRA_URIS 里的私有副本区分开。 */
+    static final String EXTRA_SOURCES = "staged_sources";
     static final String EXTRA_CALLER = "caller";
     static final String EXTRA_CALLER_LABEL = "caller_label";
     static final String EXTRA_LABEL = "label";
@@ -68,6 +73,8 @@ public final class SilentInstallActivity extends Activity {
     private static final long RESULT_DELAY_MS = 1400L;
 
     private final List<String> uris = new ArrayList<>();
+    /** 调用方给的原始 URI，供「安装成功后删除安装包」使用。 */
+    private final List<String> originals = new ArrayList<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Runnable finishRunnable = this::finishWithResult;
     private boolean valid;
@@ -101,6 +108,9 @@ public final class SilentInstallActivity extends Activity {
                 // 外部 content:// 的读权限只在本 Activity 存活期间有效，
                 // 必须趁 onCreate 阶段复制到自家 StagedProvider。
                 if (!uninstall) {
+                    // 原始 URI 单独留一份：安装成功后「删除安装包」要删的是它，
+                    // 而不是本应用缓存里的私有副本。
+                    originals.addAll(uris);
                     List<String> staged = StagedFiles.stage(this, uris);
                     uris.clear();
                     uris.addAll(staged);
@@ -266,9 +276,52 @@ public final class SilentInstallActivity extends Activity {
     }
 
     private void addUri(Uri u) {
-        if (u != null && !uris.contains(u.toString())) {
-            uris.add(u.toString());
+        if (u == null || uris.contains(u.toString()) || !plausibleInstallSource(u)) {
+            return;
         }
+        uris.add(u.toString());
+    }
+
+    /**
+     * 系统分享的 SEND filter 用全类型通配 MIME 兜底后，任何类型的文件都可能被送进来。
+     * 这里按显示名做一次轻量过滤：明确是图片 / 文本 / 音视频 / 文档的扩展名
+     * 直接丢弃，避免误点分享就发一条「安装失败」通知；拿不到扩展名（很多
+     * content:// 只给数字 ID）时放行，交给 Rust 按文件内容判定，不误拒 APK。
+     */
+    private boolean plausibleInstallSource(Uri u) {
+        String name = rawDisplayName(u).toLowerCase(Locale.ROOT);
+        if (name.endsWith(".apk") || name.endsWith(".apks") || name.endsWith(".xapk")
+                || name.endsWith(".akp") || name.endsWith(".apkm")
+                || name.endsWith(".apkmx") || name.endsWith(".zip")) {
+            return true;
+        }
+        String[] unrelated = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic",
+                ".txt", ".pdf", ".mp3", ".m4a", ".mp4", ".mkv", ".avi", ".mov",
+                ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm",
+                ".json", ".xml", ".log", ".vcf", ".ics", ".torrent"};
+        for (String ext : unrelated) {
+            if (name.endsWith(ext)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String rawDisplayName(Uri u) {
+        try (Cursor c = getContentResolver().query(u, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int n = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (n >= 0 && !c.isNull(n)) {
+                    String s = c.getString(n);
+                    if (s != null) {
+                        return s;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        String seg = u.getLastPathSegment();
+        return seg == null ? "" : seg;
     }
 
     /** 尽力识别是谁发起的调用；拿不到一律视为匿名来源，必须每次询问。 */
@@ -362,18 +415,28 @@ public final class SilentInstallActivity extends Activity {
         Log.i(TAG, "decision=" + decision + " caller=" + caller
                 + " resultTo=" + safeCallingActivity() + " valid=" + valid);
 
+        ArrayList<String> staged = new ArrayList<>(uris);
+        ArrayList<String> sources = new ArrayList<>(originals);
         if ("DENY".equals(decision)) {
             DenyLog.record(App.context(), uninstall, label, caller, callerLabel);
             resultCode = RESULT_CANCELED;
             resultDetail = "CALLER_DENIED";
         } else if ("ASK".equals(decision)) {
             DenyLog.record(App.context(), uninstall, label, caller, callerLabel, "ask");
-            Notifier.authPending(App.context(), label, caller, callerLabel,
-                    new ArrayList<>(uris), uninstall, uninstallPkg);
+            // 首次授权直接在当前应用上方弹卡片，用户不必切回本应用。
+            // 拿不到悬浮窗权限时 AuthPrompt 会自行回退成「待授权」通知。
+            boolean handled = AuthPrompt.show(App.context(), label, caller, callerLabel,
+                    staged, sources, uninstall, uninstallPkg);
+            if (!handled) {
+                Notifier.authPending(App.context(), label, caller, callerLabel,
+                        staged, sources, uninstall, uninstallPkg);
+            }
             resultCode = RESULT_CANCELED;
             resultDetail = "CALLER_PENDING";
         } else {
-            TaskLauncher.launch(this, uninstall, uris, uninstallPkg, caller, label);
+            // 把原始 URI 一并交下去：开启「成功后删除安装包」时删的是调用方的
+            // 原文件，而不是本应用缓存里的私有副本。
+            TaskLauncher.launch(this, uninstall, staged, sources, uninstallPkg, caller, label);
             resultCode = RESULT_OK;
             resultDetail = "ACCEPTED";
         }

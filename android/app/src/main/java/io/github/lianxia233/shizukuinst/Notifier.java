@@ -175,8 +175,8 @@ final class Notifier {
      * 重新发起一次。现在授权页拿到同样的 staged URI 后可直接继续安装。
      */
     static void authPending(Context c, String label, String caller, String callerLabel,
-                            ArrayList<String> uris, boolean uninstall,
-                            String uninstallPkg) {
+                            ArrayList<String> uris, ArrayList<String> sources,
+                            boolean uninstall, String uninstallPkg) {
         ensureChannels(c);
         String who = callerLabel == null || callerLabel.trim().isEmpty()
                 ? c.getString(R.string.caller_unknown) : callerLabel.trim();
@@ -197,6 +197,10 @@ final class Notifier {
         if (uris != null && !uris.isEmpty()) {
             auth.putStringArrayListExtra(SilentInstallActivity.EXTRA_URIS,
                     new ArrayList<>(uris));
+        }
+        if (sources != null && !sources.isEmpty()) {
+            auth.putStringArrayListExtra(SilentInstallActivity.EXTRA_SOURCES,
+                    new ArrayList<>(sources));
         }
         // CANCEL_CURRENT 保证每次通知携带的安装包信息都是最新的，
         // 不会复用上一次留下的旧 staged URI。

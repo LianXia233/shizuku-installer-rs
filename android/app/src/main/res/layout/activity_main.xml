@@ -406,11 +406,11 @@
                 android:layout_height="1dp" />
 
             <Button
-                android:id="@+id/btnCopy"
+                android:id="@+id/btnAbout"
                 android:layout_width="0dp"
                 android:layout_height="76dp"
                 android:layout_weight="1"
-                android:text="@string/btn_copy_log"
+                android:text="@string/btn_about"
                 android:textSize="12sp"
                 android:textAllCaps="false"
                 android:minWidth="0dp"
@@ -418,44 +418,11 @@
                 android:stateListAnimator="@null"
                 android:background="@drawable/btn_ghost"
                 android:textColor="@color/text_primary"
-                android:drawableTop="@drawable/ic_action_copy"
+                android:drawableTop="@drawable/ic_action_info"
                 android:drawableTint="@color/brand_primary"
                 android:drawablePadding="4dp"
                 android:paddingTop="10dp"
                 android:paddingBottom="8dp" />
-        </LinearLayout>
-
-        <!-- 本次执行日志 -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/section_log"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:letterSpacing="0.08"
-            android:textColor="@color/text_secondary"
-            android:layout_marginTop="18dp"
-            android:layout_marginStart="4dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/bg_log"
-            android:padding="14dp"
-            android:layout_marginTop="8dp"
-            android:minHeight="110dp">
-
-            <TextView
-                android:id="@+id/tvLog"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/log_empty"
-                android:textSize="12sp"
-                android:typeface="monospace"
-                android:lineSpacingExtra="3dp"
-                android:textIsSelectable="true"
-                android:textColor="@color/text_secondary" />
         </LinearLayout>
 
         <TextView

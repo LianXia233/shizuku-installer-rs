@@ -6,32 +6,60 @@
     android:orientation="vertical"
     android:fitsSystemWindows="true"
     android:background="@color/window_bg"
-    android:padding="16dp">
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="12dp"
+    android:paddingBottom="12dp">
 
-    <TextView
-        android:layout_width="wrap_content"
+    <!-- 标题栏：与「关于」「卸载选择器」保持一致，左上角可直接返回 -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/settings_title"
-        android:textSize="22sp"
-        android:textStyle="bold"
-        android:textColor="@color/text_primary" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/settings_subtitle"
-        android:textSize="12sp"
-        android:textColor="@color/text_secondary"
-        android:layout_marginTop="4dp" />
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/settings_back"
+            android:padding="8dp"
+            android:src="@drawable/ic_action_back"
+            android:tint="@color/text_primary" />
 
-    <!-- 授权与安装行为 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginStart="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_title"
+                android:textSize="21sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_subtitle"
+                android:textSize="11sp"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 授权与安装行为：短标题 + 小字说明，避免长文字换行撑高卡片 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="@drawable/bg_card"
-        android:padding="16dp"
-        android:layout_marginTop="14dp">
+        android:padding="14dp"
+        android:layout_marginTop="10dp">
 
         <TextView
             android:layout_width="wrap_content"
@@ -45,82 +73,149 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/auth_card_desc"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:lineSpacingExtra="2dp"
             android:textColor="@color/text_secondary"
-            android:layout_marginTop="5dp" />
+            android:layout_marginTop="4dp" />
 
         <TextView
             android:id="@+id/tvAuthWarn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/auth_disabled_warn"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textColor="@color/danger"
             android:visibility="gone"
             android:layout_marginTop="6dp" />
 
-        <Switch
-            android:id="@+id/swCallerAuth"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:minHeight="44dp"
-            android:text="@string/opt_caller_auth"
-            android:textSize="13sp"
-            android:textColor="@color/text_primary"
-            android:checked="true"
-            android:layout_marginTop="8dp" />
+            android:orientation="vertical"
+            android:background="@drawable/bg_card_soft"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:layout_marginTop="10dp">
 
-        <Switch
-            android:id="@+id/swFloating"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="44dp"
-            android:text="@string/opt_floating"
-            android:textSize="13sp"
-            android:textColor="@color/text_primary"
-            android:checked="true" />
+            <Switch
+                android:id="@+id/swCallerAuth"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="38dp"
+                android:text="@string/opt_caller_auth"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:checked="true" />
 
-        <Switch
-            android:id="@+id/swFallback"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="44dp"
-            android:text="@string/opt_fallback"
-            android:textSize="13sp"
-            android:textColor="@color/text_primary"
-            android:checked="true" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/opt_caller_auth_hint"
+                android:textSize="11sp"
+                android:textColor="@color/text_muted"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="6dp" />
 
-        <Switch
-            android:id="@+id/swAutoOpen"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="44dp"
-            android:text="@string/opt_auto_open"
-            android:textSize="13sp"
-            android:textColor="@color/text_primary"
-            android:checked="false" />
+            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" />
 
-        <Switch
-            android:id="@+id/swConfirm"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="44dp"
-            android:text="@string/opt_confirm"
-            android:textSize="13sp"
-            android:textColor="@color/text_primary"
-            android:checked="false" />
+            <Switch
+                android:id="@+id/swFloating"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="38dp"
+                android:text="@string/opt_floating"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:checked="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/opt_floating_hint"
+                android:textSize="11sp"
+                android:textColor="@color/text_muted"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="6dp" />
+
+            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" />
+
+            <Switch
+                android:id="@+id/swFallback"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="38dp"
+                android:text="@string/opt_fallback"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:checked="true" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/opt_fallback_hint"
+                android:textSize="11sp"
+                android:textColor="@color/text_muted"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="6dp" />
+
+            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" />
+
+            <Switch
+                android:id="@+id/swAutoOpen"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="38dp"
+                android:text="@string/opt_auto_open"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:checked="false" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/opt_auto_open_hint"
+                android:textSize="11sp"
+                android:textColor="@color/text_muted"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="6dp" />
+
+            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/divider" />
+
+            <Switch
+                android:id="@+id/swConfirm"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="38dp"
+                android:text="@string/opt_confirm"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:checked="false" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/opt_confirm_hint"
+                android:textSize="11sp"
+                android:textColor="@color/text_muted"
+                android:layout_marginStart="4dp"
+                android:layout_marginBottom="2dp" />
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- 系统应用列表，开关授权 -->
+    <!-- 应用授权列表：筛选 + 搜索 + 已授权置顶，占据剩余空间 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:orientation="vertical"
         android:background="@drawable/bg_card"
-        android:padding="16dp"
-        android:layout_marginTop="12dp">
+        android:padding="14dp"
+        android:layout_marginTop="10dp">
 
         <TextView
             android:layout_width="wrap_content"
@@ -134,15 +229,16 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/auth_app_list_hint"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textColor="@color/text_secondary"
-            android:layout_marginTop="4dp" />
+            android:layout_marginTop="3dp" />
 
         <TextView
             android:id="@+id/tvAllowedCount"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textSize="12sp"
+            android:textStyle="bold"
             android:textColor="@color/brand_primary"
             android:layout_marginTop="4dp" />
 
@@ -150,15 +246,68 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="10dp">
+            android:layout_marginTop="8dp">
+
+            <Button
+                android:id="@+id/btnFilterAll"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:text="@string/filter_all"
+                android:textSize="12sp"
+                android:textAllCaps="false"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:stateListAnimator="@null"
+                android:background="@drawable/bg_filter_active"
+                android:textColor="@color/on_brand" />
+
+            <Space android:layout_width="6dp" android:layout_height="1dp" />
+
+            <Button
+                android:id="@+id/btnFilterUser"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:text="@string/filter_user"
+                android:textSize="12sp"
+                android:textAllCaps="false"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:stateListAnimator="@null"
+                android:background="@drawable/btn_secondary"
+                android:textColor="@color/text_primary" />
+
+            <Space android:layout_width="6dp" android:layout_height="1dp" />
+
+            <Button
+                android:id="@+id/btnFilterSystem"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:text="@string/filter_system"
+                android:textSize="12sp"
+                android:textAllCaps="false"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:stateListAnimator="@null"
+                android:background="@drawable/btn_secondary"
+                android:textColor="@color/text_primary" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
 
             <EditText
                 android:id="@+id/etSearch"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:hint="@string/auth_search_hint"
-                android:textSize="13sp"
+                android:textSize="12sp"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_muted"
                 android:background="@drawable/bg_input"
@@ -168,14 +317,12 @@
                 android:imeOptions="actionDone"
                 android:importantForAutofill="no" />
 
-            <Space
-                android:layout_width="8dp"
-                android:layout_height="1dp" />
+            <Space android:layout_width="8dp" android:layout_height="1dp" />
 
             <Button
                 android:id="@+id/btnRevokeAll"
-                android:layout_width="88dp"
-                android:layout_height="44dp"
+                android:layout_width="84dp"
+                android:layout_height="40dp"
                 android:text="@string/auth_revoke_all"
                 android:textSize="12sp"
                 android:textAllCaps="false"
@@ -186,11 +333,19 @@
                 android:textColor="@color/text_primary" />
         </LinearLayout>
 
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/auth_system_tip"
+            android:textSize="10sp"
+            android:textColor="@color/text_muted"
+            android:layout_marginTop="6dp" />
+
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:layout_marginTop="10dp">
+            android:layout_marginTop="6dp">
 
             <ListView
                 android:id="@+id/appList"
@@ -208,19 +363,19 @@
                 android:layout_height="match_parent"
                 android:gravity="center"
                 android:text="@string/auth_loading"
-                android:textSize="13sp"
+                android:textSize="12sp"
                 android:textColor="@color/text_muted" />
         </FrameLayout>
     </LinearLayout>
 
-    <!-- 高级：原有免确认白名单，默认折叠 -->
+    <!-- 高级：免确认包名白名单，默认折叠 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:background="@drawable/bg_card"
-        android:padding="16dp"
-        android:layout_marginTop="12dp">
+        android:padding="14dp"
+        android:layout_marginTop="10dp">
 
         <LinearLayout
             android:id="@+id/advancedToggle"
@@ -228,7 +383,7 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:minHeight="36dp"
+            android:minHeight="34dp"
             android:clickable="true"
             android:focusable="true"
             android:background="?android:attr/selectableItemBackground">
@@ -238,7 +393,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/advanced_title"
-                android:textSize="14sp"
+                android:textSize="13sp"
                 android:textStyle="bold"
                 android:textColor="@color/text_primary" />
 
@@ -257,7 +412,7 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:visibility="gone"
-            android:layout_marginTop="10dp">
+            android:layout_marginTop="8dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -267,7 +422,7 @@
                 <EditText
                     android:id="@+id/etPackage"
                     android:layout_width="0dp"
-                    android:layout_height="44dp"
+                    android:layout_height="42dp"
                     android:layout_weight="1"
                     android:hint="@string/allow_hint"
                     android:textSize="13sp"
@@ -279,14 +434,12 @@
                     android:inputType="text"
                     android:importantForAutofill="no" />
 
-                <Space
-                    android:layout_width="8dp"
-                    android:layout_height="1dp" />
+                <Space android:layout_width="8dp" android:layout_height="1dp" />
 
                 <Button
                     android:id="@+id/btnAdd"
-                    android:layout_width="72dp"
-                    android:layout_height="44dp"
+                    android:layout_width="68dp"
+                    android:layout_height="42dp"
                     android:text="@string/allow_add"
                     android:textSize="13sp"
                     android:textStyle="bold"
@@ -301,7 +454,7 @@
             <Button
                 android:id="@+id/btnClear"
                 android:layout_width="match_parent"
-                android:layout_height="40dp"
+                android:layout_height="38dp"
                 android:text="@string/allow_clear"
                 android:textSize="13sp"
                 android:textAllCaps="false"
@@ -310,14 +463,14 @@
                 android:stateListAnimator="@null"
                 android:background="@drawable/btn_secondary"
                 android:textColor="@color/text_primary"
-                android:layout_marginTop="10dp" />
+                android:layout_marginTop="8dp" />
 
             <LinearLayout
                 android:id="@+id/list"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:layout_marginTop="10dp" />
+                android:layout_marginTop="8dp" />
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>

@@ -4,20 +4,15 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
-import android.text.InputType;
-import android.view.View;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.CompoundButton;
-import android.widget.EditText;
-import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -41,17 +36,14 @@ public final class MainActivity extends Activity {
     private static final String SHIZUKU_PKG = "moe.shizuku.privileged.api";
 
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final StringBuilder logBuf = new StringBuilder();
 
     private TextView tvStatusTitle;
     private TextView tvStatusHint;
     private TextView tvStatusBadge;
-    private TextView tvLog;
     private Button btnPermission;
     private Switch swConfirm;
     private Switch swDeleteAfter;
     private Switch swDowngrade;
-    private ScrollView logScroll;
 
     private JSONArray cachedAllowList = new JSONArray();
     private String pendingPlan;
@@ -72,12 +64,10 @@ public final class MainActivity extends Activity {
         tvStatusTitle = findViewById(R.id.tvStatusTitle);
         tvStatusHint = findViewById(R.id.tvStatusHint);
         tvStatusBadge = findViewById(R.id.tvStatusBadge);
-        tvLog = findViewById(R.id.tvLog);
         btnPermission = findViewById(R.id.btnPermission);
         swConfirm = findViewById(R.id.swConfirm);
         swDeleteAfter = findViewById(R.id.swDeleteAfter);
         swDowngrade = findViewById(R.id.swDowngrade);
-        logScroll = findViewById(R.id.logScroll);
 
         ShizukuBridge.setProgressListener((stage, index, total) ->
                 ui(() -> log("进度 " + index + "/" + total + " · " + stage)));
@@ -91,13 +81,17 @@ public final class MainActivity extends Activity {
         findViewById(R.id.btnCheck).setOnClickListener(v -> refreshStatus());
         btnPermission.setOnClickListener(v -> onPermissionAction());
         findViewById(R.id.btnInstall).setOnClickListener(v -> pickFile());
-        findViewById(R.id.btnUninstall).setOnClickListener(v -> showUninstallDialog(null));
+        // 卸载改为读取应用列表选择：可搜索、可按系统 / 用户应用筛选，
+        // 不再要求用户手输包名。
+        findViewById(R.id.btnUninstall).setOnClickListener(v ->
+                startActivity(new Intent(this, AppPickerActivity.class)));
         findViewById(R.id.btnSettings).setOnClickListener(v ->
                 startActivity(new Intent(this, SettingsActivity.class)));
         findViewById(R.id.btnLogs).setOnClickListener(v ->
                 startActivity(new Intent(this, LogActivity.class)));
         findViewById(R.id.btnLaunch).setOnClickListener(v -> launchLast());
-        findViewById(R.id.btnCopy).setOnClickListener(v -> copyLog());
+        findViewById(R.id.btnAbout).setOnClickListener(v ->
+                startActivity(new Intent(this, AboutActivity.class)));
 
         CompoundButton.OnCheckedChangeListener persist = (b, checked) -> {
             if (!syncingPrefs) {
@@ -347,74 +341,7 @@ public final class MainActivity extends Activity {
         });
     }
 
-    // ------------------------------------------------------------------ 卸载 / 启动 / 复制
-
-    private void showUninstallDialog(String preset) {
-        final EditText input = new EditText(this);
-        input.setInputType(InputType.TYPE_CLASS_TEXT);
-        input.setHint(R.string.dialog_uninstall_hint);
-        input.setTextColor(getResources().getColor(R.color.text_primary, getTheme()));
-        input.setHintTextColor(getResources().getColor(R.color.text_muted, getTheme()));
-        input.setBackgroundResource(R.drawable.bg_input);
-        input.setPadding(24, 16, 24, 16);
-        if (preset != null) {
-            input.setText(preset);
-        }
-        final Switch keep = new Switch(this);
-        keep.setText(R.string.dialog_keep_data);
-        keep.setTextSize(14);
-        keep.setTextColor(getResources().getColor(R.color.text_primary, getTheme()));
-        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
-        box.setOrientation(android.widget.LinearLayout.VERTICAL);
-        box.setPadding(48, 24, 48, 8);
-        box.addView(input);
-        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = 20;
-        box.addView(keep, lp);
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.dialog_uninstall_title)
-                .setView(box)
-                .setNegativeButton(R.string.dialog_cancel, null)
-                .setPositiveButton(R.string.dialog_uninstall_btn, (d, w) -> {
-                    String pkg = input.getText().toString().trim();
-                    if (!pkg.isEmpty()) {
-                        runUninstall(pkg, keep.isChecked());
-                    }
-                })
-                .show();
-    }
-
-    private void runUninstall(String pkg, boolean keepData) {
-        JSONObject a = new JSONObject();
-        try {
-            a.put("package", pkg);
-            a.put("options", new JSONObject().put("keepData", keepData));
-            a.put("context", new JSONObject().put("label", pkg).put("source", "ui"));
-        } catch (JSONException e) {
-            log("参数构造失败: " + e);
-            return;
-        }
-        log("正在卸载: " + pkg);
-        runAsync("uninstall", a.toString(), r -> {
-            if (!r.optBoolean("ok")) {
-                showError(r);
-                Notifier.finish(this, pkg, true, false, errorText(r), "");
-                return;
-            }
-            JSONObject d = r.optJSONObject("data");
-            JSONObject result = d == null ? null : d.optJSONObject("result");
-            JSONObject outcome = result == null ? null : result.optJSONObject("outcome");
-            boolean ok = outcome != null && outcome.optBoolean("ok");
-            String raw = outcome == null ? "" : outcome.optString("raw", "");
-            log((ok ? "卸载成功" : "卸载失败: " + (outcome == null ? "?" : outcome.optString("code"))));
-            if (!raw.isEmpty()) {
-                log(raw.trim());
-            }
-            Notifier.finish(this, pkg, true, ok, raw.trim(), "");
-        });
-    }
+    // ------------------------------------------------------------------ 启动 / 复制
 
     private void launchLast() {
         if (lastPackage == null) {
@@ -436,12 +363,6 @@ public final class MainActivity extends Activity {
             JSONObject res = d == null ? null : d.optJSONObject("result");
             log(res != null && res.optBoolean("ok") ? "已启动应用" : "启动失败");
         });
-    }
-
-    private void copyLog() {
-        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(ClipData.newPlainText("log", logBuf.toString()));
-        toast(getString(R.string.copied));
     }
 
     // ------------------------------------------------------------------ 配置
@@ -521,10 +442,12 @@ public final class MainActivity extends Activity {
         return seg == null || seg.isEmpty() ? "安装包" : seg;
     }
 
+    /**
+     * 主界面不再展示「本次执行日志」——完整的安装记录由独立的安装日志页负责。
+     * 这里的操作提示只写 logcat，便于排查，不占用界面。
+     */
     private void log(String line) {
-        logBuf.append(line).append('\n');
-        tvLog.setText(logBuf.toString());
-        logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+        Log.i("MainActivity", line);
     }
 
     private void toast(String s) {

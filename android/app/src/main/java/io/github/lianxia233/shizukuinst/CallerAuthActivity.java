@@ -28,6 +28,8 @@ import java.util.List;
  */
 public final class CallerAuthActivity extends Activity {
     private List<String> uris = new ArrayList<>();
+    /** 调用方给的原始 URI，仅用于「安装成功后删除安装包」。 */
+    private List<String> sources = new ArrayList<>();
     private boolean uninstall;
     private boolean ended;
     private String uninstallPkg = "";
@@ -77,6 +79,11 @@ public final class CallerAuthActivity extends Activity {
         if (list != null) {
             uris = list;
         }
+        ArrayList<String> originals = i.getStringArrayListExtra(
+                SilentInstallActivity.EXTRA_SOURCES);
+        if (originals != null) {
+            sources = originals;
+        }
         caller = i.getStringExtra(SilentInstallActivity.EXTRA_CALLER);
         callerLabel = i.getStringExtra(SilentInstallActivity.EXTRA_CALLER_LABEL);
         label = i.getStringExtra(SilentInstallActivity.EXTRA_LABEL);
@@ -117,9 +124,9 @@ public final class CallerAuthActivity extends Activity {
         });
         if (!allow) {
             DenyLog.record(getApplicationContext(), uninstall, label, caller, callerLabel);
-        } else if (!uris.isEmpty()) {
+        } else if (!uris.isEmpty() || uninstall) {
             // 只有真的带着待安装包时才继续安装；从通知进入没有包，仅完成授权
-            TaskLauncher.launch(this, uninstall, uris, uninstallPkg, caller, label);
+            TaskLauncher.launch(this, uninstall, uris, sources, uninstallPkg, caller, label);
         }
         finish();
     }

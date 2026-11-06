@@ -63,7 +63,7 @@ pub fn prepare(
         let owned_kind = util::kind_of(&sd.display_name).to_string();
         let kind = if sd.kind.is_empty() { owned_kind.as_str() } else { sd.kind.as_str() };
         match kind {
-            "apks" | "xapk" | "zip" => {
+            "apks" | "xapk" | "apkm" | "zip" => {
                 let entries = platform::archive_entries(b, &sd.uri)?;
                 archive::parts_from_archive(&sd.uri, &entries)?
             }

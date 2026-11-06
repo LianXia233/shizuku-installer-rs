@@ -9,6 +9,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
@@ -29,15 +30,18 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * 设置页：静默安装授权总开关、系统应用授权列表、安装行为开关。
- * 应用列表由 Rust 核心经平台桥接读取（QUERY_ALL_PACKAGES），
- * 授权状态与决策逻辑全部由 Rust 侧负责，这里只做渲染与调用。
+ * 设置页：静默安装授权总开关、应用授权列表、安装行为开关。
+ *
+ * 应用列表由 Rust 核心经平台桥接读取（QUERY_ALL_PACKAGES），授权状态与决策
+ * 逻辑全部由 Rust 侧负责，这里只做渲染与调用。列表支持按「全部 / 用户应用 /
+ * 系统应用」筛选，已授权应用固定置顶，并用徽章明确区分系统应用。
  */
 public final class SettingsActivity extends Activity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final List<AppRow> allApps = new ArrayList<>();
-    private final List<AppRow> shownApps = new ArrayList<>();
+    private final List<AppList.Row> allApps = new ArrayList<>();
+    private final List<AppList.Row> shownApps = new ArrayList<>();
     private final Set<String> allowed = new HashSet<>();
+    private AppList.Kind kind = AppList.Kind.ALL;
 
     private LinearLayout list;
     private LinearLayout advancedBody;
@@ -53,22 +57,12 @@ public final class SettingsActivity extends Activity {
     private Switch swFallback;
     private Switch swAutoOpen;
     private ListView appList;
+    private Button btnFilterAll;
+    private Button btnFilterUser;
+    private Button btnFilterSystem;
     private AppAdapter adapter;
     private JSONObject cachedConfig;
     private boolean suppress;
-
-    static final class AppRow {
-        final String pkg;
-        final String label;
-        final boolean system;
-        boolean allowed;
-
-        AppRow(String pkg, String label, boolean system) {
-            this.pkg = pkg;
-            this.label = label;
-            this.system = system;
-        }
-    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,9 +83,19 @@ public final class SettingsActivity extends Activity {
         swFallback = findViewById(R.id.swFallback);
         swAutoOpen = findViewById(R.id.swAutoOpen);
         appList = findViewById(R.id.appList);
+        btnFilterAll = findViewById(R.id.btnFilterAll);
+        btnFilterUser = findViewById(R.id.btnFilterUser);
+        btnFilterSystem = findViewById(R.id.btnFilterSystem);
+
+        findViewById(R.id.btnBack).setOnClickListener(v -> finish());
 
         adapter = new AppAdapter();
         appList.setAdapter(adapter);
+
+        btnFilterAll.setOnClickListener(v -> setKind(AppList.Kind.ALL));
+        btnFilterUser.setOnClickListener(v -> setKind(AppList.Kind.USER));
+        btnFilterSystem.setOnClickListener(v -> setKind(AppList.Kind.SYSTEM));
+        updateFilterButtons();
 
         findViewById(R.id.advancedToggle).setOnClickListener(v -> {
             boolean expand = advancedBody.getVisibility() != View.VISIBLE;
@@ -143,8 +147,7 @@ public final class SettingsActivity extends Activity {
             }
             if (checked && !FloatingIndicator.canDraw(this)) {
                 // 先借 Shizuku(shell) 自动开启悬浮窗权限；只有自动授权失败才
-                // 引导用户手动去系统设置。全程不会启动任何应用内窗口，
-                // 因此不会遮挡屏幕或把本应用切到前台。
+                // 引导用户手动去系统设置。全程不会启动任何应用内窗口。
                 FloatingIndicator.ensurePermissionAsync(this, () -> {
                     if (!FloatingIndicator.canDraw(this) && !isFinishing()) {
                         new AlertDialog.Builder(this)
@@ -198,36 +201,35 @@ public final class SettingsActivity extends Activity {
         super.onDestroy();
     }
 
+    private void setKind(AppList.Kind next) {
+        kind = next;
+        updateFilterButtons();
+        filter(etSearch.getText() == null ? "" : etSearch.getText().toString());
+    }
+
+    private void updateFilterButtons() {
+        styleFilter(btnFilterAll, kind == AppList.Kind.ALL);
+        styleFilter(btnFilterUser, kind == AppList.Kind.USER);
+        styleFilter(btnFilterSystem, kind == AppList.Kind.SYSTEM);
+    }
+
+    private void styleFilter(Button b, boolean active) {
+        b.setBackgroundResource(active
+                ? R.drawable.bg_filter_active : R.drawable.btn_secondary);
+        b.setTextColor(getResources().getColor(active
+                ? R.color.on_brand : R.color.text_primary, getTheme()));
+    }
+
     private void loadAll() {
         worker.execute(() -> {
             JSONObject status = dispatch("status", "{}");
             JSONObject d = status.optJSONObject("data");
             JSONObject cfg = d == null ? null : d.optJSONObject("config");
-
-            JSONObject appsR = dispatch("installedApps", "{}");
-            JSONObject ad = appsR.optJSONObject("data");
-            JSONArray arr = ad == null ? null : ad.optJSONArray("apps");
-            List<AppRow> rows = new ArrayList<>();
-            if (arr != null) {
-                for (int i = 0; i < arr.length(); i++) {
-                    JSONObject o = arr.optJSONObject(i);
-                    if (o == null) {
-                        continue;
-                    }
-                    String pkg = o.optString("package", "");
-                    if (pkg.isEmpty()) {
-                        continue;
-                    }
-                    String name = o.optString("label", "");
-                    rows.add(new AppRow(pkg, name.isEmpty() ? pkg : name,
-                            o.optBoolean("system", false)));
-                }
-            }
+            List<AppList.Row> rows = AppList.load();
             final JSONObject cfgFinal = cfg;
-            final List<AppRow> rowsFinal = rows;
             ui(() -> {
                 applyConfig(cfgFinal);
-                setApps(rowsFinal);
+                setApps(rows);
             });
         });
     }
@@ -258,7 +260,7 @@ public final class SettingsActivity extends Activity {
         syncAllowedFlags();
     }
 
-    private void setApps(List<AppRow> rows) {
+    private void setApps(List<AppList.Row> rows) {
         allApps.clear();
         allApps.addAll(rows);
         syncAllowedFlags();
@@ -266,7 +268,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void syncAllowedFlags() {
-        for (AppRow r : allApps) {
+        for (AppList.Row r : allApps) {
             r.allowed = allowed.contains(r.pkg);
         }
         if (adapter != null) {
@@ -278,30 +280,45 @@ public final class SettingsActivity extends Activity {
     private void filter(String query) {
         shownApps.clear();
         String q = query.trim().toLowerCase(Locale.ROOT);
-        for (AppRow r : allApps) {
+        for (AppList.Row r : allApps) {
+            if (!AppList.matches(r, kind)) {
+                continue;
+            }
             if (q.isEmpty()
                     || r.label.toLowerCase(Locale.ROOT).contains(q)
                     || r.pkg.toLowerCase(Locale.ROOT).contains(q)) {
                 shownApps.add(r);
             }
         }
+        // 已授权永远置顶；组内用户应用在前、系统应用在后；最后按名称排序。
+        // 这样几百个应用里不必翻找常用项，系统应用也能一眼分辨。
+        shownApps.sort((a, b) -> {
+            if (a.allowed != b.allowed) {
+                return a.allowed ? -1 : 1;
+            }
+            if (a.system != b.system) {
+                return a.system ? 1 : -1;
+            }
+            return a.label.compareToIgnoreCase(b.label);
+        });
         adapter.notifyDataSetChanged();
         appEmpty.setVisibility(shownApps.isEmpty() ? View.VISIBLE : View.GONE);
         appEmpty.setText(allApps.isEmpty()
-                ? R.string.auth_loading : R.string.auth_no_match);
+                ? R.string.auth_loading
+                : (kind == AppList.Kind.ALL ? R.string.auth_no_match : R.string.auth_empty_filter));
     }
 
     private void updateCount() {
         int n = 0;
-        for (AppRow r : allApps) {
+        for (AppList.Row r : allApps) {
             if (r.allowed) {
                 n++;
             }
         }
-        tvAllowedCount.setText(getString(R.string.auth_allowed_count, n));
+        tvAllowedCount.setText(getString(R.string.auth_allowed_count, n, allApps.size()));
     }
 
-    private void toggle(AppRow row) {
+    private void toggle(AppList.Row row) {
         boolean next = !row.allowed;
         row.allowed = next;
         if (next) {
@@ -309,7 +326,8 @@ public final class SettingsActivity extends Activity {
         } else {
             allowed.remove(row.pkg);
         }
-        adapter.notifyDataSetChanged();
+        // 重新走一遍过滤：已授权项立刻置顶，取消授权则落回原位
+        filter(etSearch.getText() == null ? "" : etSearch.getText().toString());
         updateCount();
         try {
             call("callerSet", new JSONObject()
@@ -426,11 +444,21 @@ public final class SettingsActivity extends Activity {
                 v = LayoutInflater.from(SettingsActivity.this)
                         .inflate(R.layout.item_app, parent, false);
             }
-            final AppRow row = shownApps.get(position);
+            final AppList.Row row = shownApps.get(position);
             ((TextView) v.findViewById(R.id.itemAppName)).setText(row.label);
             ((TextView) v.findViewById(R.id.itemAppPkg)).setText(row.pkg);
-            ((TextView) v.findViewById(R.id.itemAppTag)).setText(getString(
-                    row.system ? R.string.auth_tag_system : R.string.auth_tag_user));
+
+            TextView tag = v.findViewById(R.id.itemAppTag);
+            tag.setText(getString(row.system
+                    ? R.string.auth_tag_system : R.string.auth_tag_user));
+            tag.setBackgroundResource(row.system
+                    ? R.drawable.bg_tag_system : R.drawable.bg_tag_user);
+            tag.setTextColor(getResources().getColor(row.system
+                    ? R.color.warning : R.color.brand_primary, getTheme()));
+
+            v.findViewById(R.id.itemAppAllowed).setVisibility(
+                    row.allowed ? View.VISIBLE : View.GONE);
+
             Switch sw = v.findViewById(R.id.itemAppSwitch);
             sw.setOnCheckedChangeListener(null);
             sw.setChecked(row.allowed);
