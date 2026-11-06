@@ -11,9 +11,9 @@ import java.util.List;
 /**
  * 把一次静默安装/卸载交给进程级后台线程。
  *
- * 悬浮指示器必须在这个「仍在前台」的时刻准备：没有 SYSTEM_ALERT_WINDOW 权限时
- * 会降级启动一个 44dp 的 Activity 小窗，而 Android 10+ 限制后台启动 Activity，
- * 所以在后台线程里再启动是不可靠的。
+ * 指示器只使用系统悬浮窗（TYPE_APPLICATION_OVERLAY），不启动任何 Activity；
+ * 没有权限时由 FloatingIndicator 借 Shizuku 自动授权，失败则静默放弃，
+ * 因此不存在「后台启动 Activity 被限制」或「把本应用切到前台」的问题。
  */
 final class TaskLauncher {
     private TaskLauncher() {
@@ -21,8 +21,8 @@ final class TaskLauncher {
 
     static void launch(Activity a, boolean uninstall, List<String> uris,
                        String uninstallPkg, String caller, String label) {
-        FloatingIndicator.showForeground(a, floatingEnabled());
         Context app = a.getApplicationContext();
+        FloatingIndicator.show(app, floatingEnabled());
         final List<String> snapshot = new ArrayList<>(uris);
         App.executor().execute(uninstall
                 ? SilentTask.uninstall(app, uninstallPkg, caller)

@@ -140,14 +140,20 @@ public final class SettingsActivity extends Activity {
                 return;
             }
             if (checked && !FloatingIndicator.canDraw(this)) {
-                // 不再把开关强制关掉：未授权时会降级为 44dp 小窗，指示器仍然可见
-                new AlertDialog.Builder(this)
-                        .setTitle(R.string.overlay_perm_title)
-                        .setMessage(R.string.overlay_perm_msg)
-                        .setPositiveButton(R.string.overlay_perm_grant,
-                                (d, w) -> FloatingIndicator.openPermissionSettings(this))
-                        .setNegativeButton(R.string.overlay_perm_skip, null)
-                        .show();
+                // 先借 Shizuku(shell) 自动开启悬浮窗权限；只有自动授权失败才
+                // 引导用户手动去系统设置。全程不会启动任何应用内窗口，
+                // 因此不会遮挡屏幕或把本应用切到前台。
+                FloatingIndicator.ensurePermissionAsync(this, () -> {
+                    if (!FloatingIndicator.canDraw(this) && !isFinishing()) {
+                        new AlertDialog.Builder(this)
+                                .setTitle(R.string.overlay_perm_title)
+                                .setMessage(R.string.overlay_perm_msg)
+                                .setPositiveButton(R.string.overlay_perm_grant,
+                                        (d, w) -> FloatingIndicator.openPermissionSettings(this))
+                                .setNegativeButton(R.string.overlay_perm_skip, null)
+                                .show();
+                    }
+                });
             }
             saveConfig();
         });

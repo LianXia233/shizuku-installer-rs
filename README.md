@@ -17,7 +17,7 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 │  MainActivity / SettingsActivity / LogActivity (Java, UI 与生命周期) │
 │  SilentInstallActivity (无窗口入口) · CallerAuthActivity (授权卡片)  │
 │  StagedFiles + StagedProvider (外部 URI 私有化) · TaskLauncher       │
-│  SilentTask (进程级后台任务) · FloatingIndicator + IndicatorActivity │
+│  SilentTask (进程级后台任务) · FloatingIndicator (系统悬浮窗)      │
 │  Notifier (通知) · AppNames (应用名与错误文案)                      │
 │        │  RustCore.dispatch(method, argsJson) : String               │
 │        ▼                                                             │
@@ -49,7 +49,7 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 | F-05 | 通知气泡显示安装中 / 进度 / 结果，一键启动、查看日志 | `Notifier`, `SilentTask` |
 | F-06 | 安装日志：自动记录、历史查看、导出分享、清空 | `logbook.rs`, `InstallLogStore`, `LogActivity` |
 | F-07 | **调用方授权**：外部应用首次调用弹窗询问，设置页可勾选允许哪些应用 | `auth.rs`, `CallerAuthActivity`, `SettingsActivity` |
-| F-08 | **无遮罩后台指示**：左上角科幻风旋转指示器，点击穿透、不染黑系统栏；无悬浮窗权限也能显示 | `FloatingIndicator`, `IndicatorActivity`, `SciFiSpinner` |
+| F-08 | **无遮罩后台指示**：左上角科幻风旋转指示器，点击穿透、不染黑系统栏；悬浮窗权限可由 Shizuku 自动开启 | `FloatingIndicator`, `SciFiSpinner` |
 | F-09 | **失败降级**：静默安装失败时自动拉起系统安装界面 | `SilentTask`, `Config` |
 | F-10 | **中文展示**：通知、日志、错误原因显示应用实际名称与中文说明 | `AppNames`, `apk_meta.rs`, `util.rs`, `logbook.rs` |
 | F-11 | **写入兜底**：stdin 流式写入失败时自动改用文件路径写入，适配不同 ROM | `install.rs`, `plan.rs`, `ShizukuBridge` |
@@ -57,10 +57,12 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 ### 静默安装流程
 
 - 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `SEND_MULTIPLE` / `DELETE` / `UNINSTALL_PACKAGE`
-  意图由 `SilentInstallActivity` 接管。它使用**无窗口主题**（无背景、无 `windowIsTranslucent`、
-  无 `windowIsFloating`、禁用启动预览），不调用 `setContentView`，并把窗口压到 1x1 且
-  `FLAG_NOT_TOUCHABLE`，在 `onCreate` 内立即 finish。安装期间屏幕上不存在本应用的窗口，
-  因此不会出现状态栏 / 导航栏变黑或点击屏幕卡住的问题。
+  意图由 `SilentInstallActivity` 接管。它使用 `Theme.NoDisplay`：系统**根本不为其创建窗口或
+  surface**，因此不调用 `setContentView`、也不碰 `getWindow()`，在 `onCreate` 内立即 finish。
+  即便此处同步复制安装包耗时，屏幕上也不存在本应用的任何窗口，不会出现整屏黑、
+  状态栏 / 导航栏变黑、点击卡住或把本应用切到前台的问题。
+  （不要用「普通窗口 + 代码把尺寸压到 1x1」：Activity 主窗口在多数 ROM 上会被强制回
+  MATCH_PARENT，不透明 surface 上的透明背景合成后就是纯黑。）
 - **外部 URI 私有化**：调用方通过 `FLAG_GRANT_READ_URI_PERMISSION` 授予的读权限只在其
   Intent 对应的 Activity 存活期间有效。入口在仍持有权限时把安装包复制到应用私有缓存，
   并由自家只读 `StagedProvider` 暴露；后台任务全程只读这个 URI，不会因 Activity 销毁、
@@ -117,9 +119,13 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 - 安装前展示的包名/版本/应用名由 Rust 自写的 binary-XML 读取器解析
   `AndroidManifest.xml`，解析失败自动降级、不阻塞安装。
 - 所有拼进 shell 的参数由 Rust 生成，包名经 `is_valid_package_name` 校验，避免注入。
-- **悬浮指示器双路径**：已授予 `SYSTEM_ALERT_WINDOW` 时用 `TYPE_APPLICATION_OVERLAY`
-  的 40dp 小窗（不切换 task、不 pause 前台）；未授予时由前台入口启动 44dp 的
-  `IndicatorActivity`（普通窗口、透明、点击穿透、无 dim），同样能看到小圆且不需要任何权限。
+- **悬浮指示器只用系统悬浮窗**：`TYPE_APPLICATION_OVERLAY` 的 40dp 小窗，
+  `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE`、透明像素格式、不 dim —— 不切换 task、
+  不 pause 前台应用、点击完全穿透。
+  没有 `SYSTEM_ALERT_WINDOW` 权限时，借本应用已有的 Shizuku(shell) 身份执行
+  `appops set <pkg> SYSTEM_ALERT_WINDOW allow` 自动开启；自动授权也失败则静默放弃指示器，
+  安装照常由通知反馈。**绝不用普通 Activity 窗口模拟悬浮窗**：那会强制回全屏尺寸，
+  配合透明背景产生整屏黑，且 `startActivity` 会把本应用 task 拉到前台。
 - NDK r27 + `max-page-size=16384`，满足 Android 15/16 的 **16KB 内存页**要求。
 - UI 为纯原生 View + vector/gradient/ripple drawable，无额外 UI 框架依赖；深浅色主题齐备。
 
@@ -153,8 +159,9 @@ CI 见 `.github/workflows/build.yml`。
 1. 安装并启动 Shizuku（无线调试或 root），确认服务运行中。
 2. 首次打开本应用，完成 Shizuku 授权并允许通知权限（进度气泡需要）。
 3. 在「设置」里确认静默安装授权总开关，并勾选允许发起静默安装的应用；
-   「显示在其他应用上层」权限是**可选**的：不授权也会显示左上角小圆（点击穿透），
-   授权后指示器完全不打断前台应用。
+   「显示在其他应用上层」权限是**可选**的：应用会尝试通过 Shizuku 自动开启，
+   若设备限制导致失败可手动开启。未开启时安装照常进行，仅以通知反馈进度，
+   绝不会遮挡屏幕或切换应用。
 4. 从文件管理器用「打开方式 / 分享」把 APK 交给本应用：已授权来源直接后台执行，
    首次调用会弹一张小卡片询问是否允许，之后不再打扰。
 5. 安装期间停留在当前应用，通知栏显示「XXX 正在安装中」及进度，
@@ -173,11 +180,11 @@ CI 见 `.github/workflows/build.yml`。
 | Android 14 (API 34) | 无前台服务；`PendingIntent.FLAG_IMMUTABLE` |
 | Android 13 (API 33) | `POST_NOTIFICATIONS` 动态申请；通知渠道；themed icon |
 | Android 11+ (API 30) | `<queries>` 包可见性；`QUERY_ALL_PACKAGES` 用于设置页枚举应用；全量 SAF |
-| Android 10+ (API 29) | 后台启动 Activity 受限，指示器小窗由前台入口启动 |
+| Android 10+ (API 29) | 后台启动 Activity 受限，指示器改用系统悬浮窗，不启动任何 Activity |
 | Android 8+ (API 26) | `TYPE_APPLICATION_OVERLAY`；adaptive icon + 单色图标 |
 
-权限说明：`SYSTEM_ALERT_WINDOW` 只用于可选的安装进度小指示器，
-未授予时自动降级为前台入口启动的 44dp 小窗；`QUERY_ALL_PACKAGES` 只用于设置页展示
+权限说明：`SYSTEM_ALERT_WINDOW` 只用于可选的安装进度小指示器，可由 Shizuku 自动授予，
+未授予时静默退化为纯通知反馈；`QUERY_ALL_PACKAGES` 只用于设置页展示
 系统应用列表，不上传、不持久化到任何远端。
 
 ## 7. 目录

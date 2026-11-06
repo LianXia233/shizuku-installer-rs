@@ -53,9 +53,9 @@ final class SilentTask implements Runnable {
     public void run() {
         synchronized (SERIAL) {
             readConfig();
-            // 入口 Activity 已在前台调用 showForeground；这里只做后台兜底
-            // （无悬浮窗权限时后台无法启动 Activity，仅尝试 overlay）。
-            FloatingIndicator.showBackground(app, floating);
+            // 幂等兜底：TaskLauncher 已调用过 show；这里是后台任务的再次确认。
+            // 无论有无悬浮窗权限都不会启动 Activity，屏幕始终只有系统悬浮小窗。
+            FloatingIndicator.show(app, floating);
             try {
                 if (uninstall) {
                     runUninstall();

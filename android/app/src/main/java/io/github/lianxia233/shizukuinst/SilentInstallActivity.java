@@ -3,12 +3,9 @@ package io.github.lianxia233.shizukuinst;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.Intent;
-import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
-import android.view.Gravity;
-import android.view.Window;
-import android.view.WindowManager;
+import android.util.Log;
 
 import org.json.JSONObject;
 
@@ -18,11 +15,15 @@ import java.util.List;
 /**
  * 外部「打开方式 / 分享 / 安装 / 卸载」意图的入口。
  *
- * 使用 {@code Theme.SilentEntry}（无背景、无 translucent、无 floating、禁预览）：
- * 系统不会为它创建任何可见窗口，因此安装期间屏幕上不存在全屏透明遮罩，
- * 状态栏/导航栏不会变黑，也不会拦截前台应用的触摸。
- * 这与之前「1x1 浮动窗口 + windowIsFloating」的方案不同 —— 后者在部分 ROM 上
- * 仍会绘制全屏 scrim 并吞掉点击。
+ * 使用 {@code Theme.NoDisplay}：系统根本不为它创建窗口 / surface，也不做
+ * Activity 切换动画。因此即便 onCreate 里同步复制安装包耗时，屏幕上也不会出现
+ * 任何窗口，状态栏/导航栏不会变黑，也不会拦截前台应用的触摸、不会把本应用
+ * 切到前台。
+ *
+ * 注意：绝不能把它改成「普通窗口 + 代码里把尺寸压到 1x1」。Activity 主窗口
+ * (TYPE_BASE_APPLICATION) 在不少 ROM 上会被强制回 MATCH_PARENT，而
+ * windowIsTranslucent=false 的窗口拿到的是 opaque surface，透明 / @null 背景
+ * 合成出来就是整屏纯黑 —— 这正是上一版黑屏的来源。
  *
  * 本 Activity 只负责三件事，随后立刻 finish：
  *   1. 在仍持有外部 URI 读权限时把安装包复制到应用私有缓存（{@link StagedFiles}）；
@@ -30,6 +31,7 @@ import java.util.List;
  *   3. 放行则把安装交给进程级后台任务，需询问则转发给 {@link CallerAuthActivity}。
  */
 public final class SilentInstallActivity extends Activity {
+    private static final String TAG = "SilentEntry";
     static final String EXTRA_URIS = "staged_uris";
     static final String EXTRA_CALLER = "caller";
     static final String EXTRA_CALLER_LABEL = "caller_label";
@@ -49,46 +51,30 @@ public final class SilentInstallActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // 无窗口主题：绝不 setContentView。再把窗口压到 1x1 并完全点击穿透，
-        // 即便某些 ROM 仍为 NoDisplay Activity 创建一个 DecorView，也不会出现
-        // 全屏透明遮罩、系统栏变黑或吞掉前台触摸。
-        shrinkWindow();
-        Notifier.ensureChannels(this);
-        parseIntent(getIntent());
-        if (!valid) {
+        // Theme.NoDisplay 不创建窗口：绝不 setContentView，也绝不碰 getWindow()。
+        // 该主题要求 Activity 在 onResume 之前 finish；用 try/finally 保证
+        // 任何异常路径（坏 Parcelable、通知服务不可用等）都立即销毁，
+        // 否则系统会为这个无界面 Activity 绘制黑屏。
+        try {
+            Notifier.ensureChannels(this);
+            parseIntent(getIntent());
+            if (valid) {
+                // 关键：外部 content:// 的读权限只在本 Activity 存活期间有效。
+                // 先复制到自家私有缓存，后台任务全程只读 StagedProvider，不会因
+                // finish 后授权被回收而在 install-write 阶段抛 SecurityException。
+                if (!uninstall) {
+                    List<String> staged = StagedFiles.stage(this, uris);
+                    uris.clear();
+                    uris.addAll(staged);
+                }
+                caller = resolveCaller(getIntent());
+                evaluate();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "silent entry failed", t);
+        } finally {
             finishQuietly();
-            return;
         }
-
-        // 关键：外部 content:// 的读权限只在本 Activity 存活期间有效。
-        // 先复制到自家私有缓存，后台任务全程只读 StagedProvider，不会因
-        // finish 后授权被回收而在 install-write 阶段抛 SecurityException。
-        if (!uninstall) {
-            List<String> staged = StagedFiles.stage(this, uris);
-            uris.clear();
-            uris.addAll(staged);
-        }
-
-        caller = resolveCaller(getIntent());
-        evaluate();
-    }
-
-    /** 1x1、透明、点击完全穿透的窗口；不改变系统栏配色，不 dim。 */
-    private void shrinkWindow() {
-        Window w = getWindow();
-        w.setBackgroundDrawable(new ColorDrawable(0));
-        WindowManager.LayoutParams lp = w.getAttributes();
-        lp.width = 1;
-        lp.height = 1;
-        lp.gravity = Gravity.TOP | Gravity.START;
-        lp.x = 0;
-        lp.y = 0;
-        lp.dimAmount = 0f;
-        lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
-        lp.flags &= ~WindowManager.LayoutParams.FLAG_DIM_BEHIND;
-        w.setAttributes(lp);
     }
 
     // ---------------------------------------------------------------- 意图解析

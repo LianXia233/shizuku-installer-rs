@@ -1,6 +1,5 @@
 package io.github.lianxia233.shizukuinst;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.PixelFormat;
@@ -8,28 +7,36 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 /**
- * 安装期间的左上角科幻风圆形进度指示器，两条路径保证「一定能看见」：
+ * 安装期间的左上角科幻风圆形进度指示器。
  *
- *  1. 已授予 SYSTEM_ALERT_WINDOW：TYPE_APPLICATION_OVERLAY 的 40dp 小窗，
- *     完全不切换 task、不 pause 前台应用，体验最佳。
- *  2. 未授予：由前台入口 Activity 启动 {@link IndicatorActivity}（44dp 普通窗口，
- *     NOT_TOUCHABLE、透明、无 dim、非 translucent），不需要任何权限。
- *     绝不再像旧版那样「无权限就静默不显示」—— 那正是用户看不到小圆的原因。
+ * 只使用 {@code TYPE_APPLICATION_OVERLAY}：这是唯一能浮在其他应用之上、完全不切换
+ * task、不 pause 前台应用、点击穿透的窗口类型，不会染黑状态栏/导航栏，也不会出现
+ * 全屏遮罩。
  *
- * 生命周期跟随安装任务：show* 幂等，dismiss 由后台任务的 finally 调用。
+ * 绝不再用普通 Activity 窗口来画小圆：Activity 主窗口在多数 ROM 上会被强制回
+ * MATCH_PARENT，配合透明/空背景会合成出整屏纯黑；而 {@code startActivity} 又会把
+ * 本应用 task 拉到前台 —— 那正是「安装时整屏黑 + 跳回软件」的确切原因。
+ *
+ * 没有 SYSTEM_ALERT_WINDOW 权限时，借本应用已有的 Shizuku(shell) 能力执行
+ * {@code appops set <pkg> SYSTEM_ALERT_WINDOW allow} 自动授予。自动授权也失败时
+ * 不显示任何窗口（安装照常由通知反馈），绝不降级成 Activity。
  */
 final class FloatingIndicator {
+    private static final String TAG = "FloatingIndicator";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final Object LOCK = new Object();
 
     private static boolean active;
-    private static IndicatorActivity hostActivity;
-    private static SciFiSpinner hostSpinner;
+    private static boolean granting;
     private static WindowManager overlayWm;
     private static View overlayView;
     private static SciFiSpinner overlaySpinner;
@@ -55,12 +62,12 @@ final class FloatingIndicator {
         }
     }
 
-    /** 在仍位于前台的入口 Activity 中调用：两条路径都可用。 */
-    static void showForeground(Activity a, boolean enabled) {
+    /** 安装任务开始时调用；任意线程、任意次数均幂等。 */
+    static void show(Context c, boolean enabled) {
         if (!enabled) {
             return;
         }
-        final Context app = a.getApplicationContext();
+        final Context app = c.getApplicationContext();
         synchronized (LOCK) {
             if (active) {
                 return;
@@ -69,32 +76,98 @@ final class FloatingIndicator {
         }
         if (canDraw(app)) {
             MAIN.post(() -> addOverlay(app));
-        } else {
-            try {
-                Intent i = new Intent(a, IndicatorActivity.class);
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_NO_ANIMATION);
-                a.startActivity(i);
-            } catch (Throwable t) {
-                synchronized (LOCK) {
-                    active = false;
-                }
-            }
+            return;
         }
+        // 没有悬浮窗权限：后台借 Shizuku 自动授权，成功后才挂 overlay。
+        // 授权失败就静默放弃指示器，绝不启动任何 Activity。
+        synchronized (LOCK) {
+            if (granting) {
+                return;
+            }
+            granting = true;
+        }
+        App.executor().execute(() -> {
+            boolean ok = grantOverlayPermission(app);
+            synchronized (LOCK) {
+                granting = false;
+            }
+            if (ok) {
+                MAIN.post(() -> addOverlay(app));
+            }
+        });
     }
 
-    /** 后台任务兜底：没有悬浮窗权限时不能可靠启动 Activity，只尝试 overlay。 */
-    static void showBackground(Context app, boolean enabled) {
-        if (!enabled) {
+    /** 设置页手动触发：尝试自动授权，完成后在主线程回调（无论成功与否）。 */
+    static void ensurePermissionAsync(Context c, Runnable onDone) {
+        final Context app = c.getApplicationContext();
+        if (canDraw(app)) {
+            if (onDone != null) {
+                MAIN.post(onDone);
+            }
             return;
         }
         synchronized (LOCK) {
-            if (active || !canDraw(app)) {
+            if (granting) {
+                if (onDone != null) {
+                    MAIN.post(onDone);
+                }
                 return;
             }
-            active = true;
+            granting = true;
         }
-        MAIN.post(() -> addOverlay(app));
+        App.executor().execute(() -> {
+            grantOverlayPermission(app);
+            synchronized (LOCK) {
+                granting = false;
+            }
+            if (onDone != null) {
+                MAIN.post(onDone);
+            }
+        });
+    }
+
+    /**
+     * 通过 Shizuku 提供的 shell 进程把本应用的 AppOps OP 24
+     * (SYSTEM_ALERT_WINDOW) 设为 allow，等价于
+     * {@code adb shell appops set <pkg> SYSTEM_ALERT_WINDOW allow}。
+     * 不同 ROM 的命令入口不一致，逐个尝试并以 canDrawOverlays 的真实结果为准。
+     */
+    private static boolean grantOverlayPermission(Context app) {
+        if (canDraw(app)) {
+            return true;
+        }
+        String pkg = app.getPackageName();
+        String[][] candidates = {
+                {"appops", "set", pkg, "SYSTEM_ALERT_WINDOW", "allow"},
+                {"cmd", "appops", "set", pkg, "SYSTEM_ALERT_WINDOW", "allow"},
+                {"appops", "set", "--user", "0", pkg, "SYSTEM_ALERT_WINDOW", "allow"},
+                {"appops", "set", pkg, "24", "allow"},
+        };
+        for (String[] argv : candidates) {
+            try {
+                JSONArray arr = new JSONArray();
+                for (String s : argv) {
+                    arr.put(s);
+                }
+                JSONObject args = new JSONObject().put("argv", arr);
+                String resp = ShizukuBridge.call("exec", args.toString());
+                if (resp == null) {
+                    continue;
+                }
+                JSONObject o = new JSONObject(resp);
+                // {"error":...} 表示桥接层/Shizuku 未就绪，换下一条命令或放弃
+                if (o.has("error")) {
+                    continue;
+                }
+                // 退出码不可靠，以系统真实状态为准
+                if (canDraw(app)) {
+                    return true;
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "overlay grant attempt failed", t);
+            }
+        }
+        return canDraw(app);
     }
 
     private static void addOverlay(Context app) {
@@ -117,7 +190,8 @@ final class FloatingIndicator {
                         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                         PixelFormat.TRANSLUCENT);
                 lp.gravity = Gravity.TOP | Gravity.START;
                 lp.x = pad;
@@ -127,31 +201,9 @@ final class FloatingIndicator {
                 overlayView = v;
                 overlaySpinner = v;
                 v.startAnimation();
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
-    static void onActivityCreated(IndicatorActivity a, SciFiSpinner spinner) {
-        boolean finishNow;
-        synchronized (LOCK) {
-            hostActivity = a;
-            hostSpinner = spinner;
-            finishNow = !active;
-        }
-        spinner.setProgress(-1);
-        spinner.startAnimation();
-        if (finishNow) {
-            a.finish();
-            a.overridePendingTransition(0, 0);
-        }
-    }
-
-    static void onActivityDestroyed(IndicatorActivity a) {
-        synchronized (LOCK) {
-            if (hostActivity == a) {
-                hostActivity = null;
-                hostSpinner = null;
+            } catch (Throwable t) {
+                // 权限被 ROM 额外拦截时 addView 会抛异常：静默放弃，绝不降级成窗口
+                Log.w(TAG, "addView overlay failed, indicator skipped", t);
             }
         }
     }
@@ -163,14 +215,11 @@ final class FloatingIndicator {
                 if (overlaySpinner != null) {
                     overlaySpinner.setProgress(pct);
                 }
-                if (hostSpinner != null) {
-                    hostSpinner.setProgress(pct);
-                }
             }
         });
     }
 
-    /** 安装结束（无论成功失败）后移除全部指示器。 */
+    /** 安装结束（无论成功失败）后移除指示器。 */
     static void dismiss() {
         MAIN.post(() -> {
             synchronized (LOCK) {
@@ -189,15 +238,6 @@ final class FloatingIndicator {
                 overlayView = null;
                 overlaySpinner = null;
                 overlayWm = null;
-                if (hostActivity != null) {
-                    try {
-                        hostActivity.finish();
-                        hostActivity.overridePendingTransition(0, 0);
-                    } catch (Throwable ignored) {
-                    }
-                }
-                hostActivity = null;
-                hostSpinner = null;
             }
         });
     }

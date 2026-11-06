@@ -65,7 +65,7 @@
     <string name="auth_card_title">静默安装授权</string>
     <string name="auth_card_desc">只有被允许的应用才能直接发起静默安装；首次调用会弹窗询问，不会让任意软件都能直接安装。</string>
     <string name="opt_caller_auth">外部调用需授权（推荐开启）</string>
-    <string name="opt_floating">安装时显示左上角悬浮指示器</string>
+    <string name="opt_floating">安装时显示左上角悬浮指示器（系统悬浮窗，不遮挡屏幕）</string>
     <string name="opt_fallback">静默失败后降级为系统安装器</string>
     <string name="auth_disabled_warn">已关闭授权：任何应用都可发起静默安装</string>
 
@@ -98,9 +98,9 @@
     <string name="notify_fallback_text">静默安装未成功，已打开系统安装界面，请手动确认</string>
 
     <string name="overlay_perm_title">悬浮窗权限（可选）</string>
-    <string name="overlay_perm_msg">授予后安装指示器以系统悬浮窗显示，完全不打断前台应用。不授权也照样会显示左上角小圆（点击穿透），只是会短暂把本应用切到前台。</string>
+    <string name="overlay_perm_msg">安装指示器以系统悬浮窗显示，完全不打断前台应用。应用会尝试通过 Shizuku 自动开启该权限；若设备限制导致失败，可在此手动开启。未开启时安装照常进行，仅以通知反馈进度，绝不会遮挡屏幕或切换应用。</string>
     <string name="overlay_perm_grant">去授权</string>
-    <string name="overlay_perm_skip">使用小窗</string>
+    <string name="overlay_perm_skip">暂不</string>
 
     <string name="dialog_confirm_title">确认安装</string>
     <string name="dialog_confirm_btn">开始安装</string>

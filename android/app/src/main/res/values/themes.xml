@@ -15,18 +15,18 @@
     </style>
 
     <!--
-      外部安装意图的无窗口入口。
-      关键：既不用 windowIsTranslucent，也不用 windowIsFloating —— 这两者都会让
-      部分 ROM 给全屏窗口绘制 scrim、把状态栏/导航栏染黑并短暂吞掉触摸，
-      正是「静默安装时屏幕卡住」的根因。
-      Activity 不 setContentView 且在 onCreate 内立即 finish，屏幕上不存在窗口。
+      外部安装意图的入口：Theme.NoDisplay 让系统完全不为它创建窗口 / surface，
+      因此即便 onCreate 里同步复制安装包耗时，屏幕上也不会出现任何全屏窗口，
+      更不会把状态栏、导航栏染黑或吞掉前台触摸。
+
+      不要再改成「普通窗口 + 代码把尺寸压到 1x1」：Activity 主窗口
+      (TYPE_BASE_APPLICATION) 在不少 ROM 上会被强制回 MATCH_PARENT，
+      配合 @null / 透明背景就会合成出整屏纯黑 —— 这正是上一版的黑屏来源。
     -->
-    <style name="Theme.SilentEntry" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.SilentEntry" parent="android:style/Theme.NoDisplay">
         <item name="android:windowBackground">@null</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowIsTranslucent">false</item>
-        <item name="android:windowIsFloating">false</item>
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowDisablePreview">true</item>
@@ -45,22 +45,4 @@
         <item name="android:textColorSecondary">@color/text_secondary</item>
     </style>
 
-    <!--
-      无悬浮窗权限时的 44dp 小圆窗口。刻意保持普通（非 floating、非 translucent）
-      窗口，运行时由代码把尺寸改成 44dp 并置于左上角，避免全屏 scrim。
-    -->
-    <style name="Theme.Indicator" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowContentOverlay">@null</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:windowIsTranslucent">false</item>
-        <item name="android:windowIsFloating">false</item>
-        <item name="android:backgroundDimEnabled">false</item>
-        <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:windowDisablePreview">true</item>
-        <item name="android:colorBackgroundCacheHint">@null</item>
-        <item name="android:windowActionBar">false</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
-    </style>
 </resources>
