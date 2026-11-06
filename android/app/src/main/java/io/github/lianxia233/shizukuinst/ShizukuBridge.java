@@ -47,7 +47,8 @@ public final class ShizukuBridge {
     private static final String DEFAULT_CONFIG =
             "{\"confirmBeforeInstall\":false,\"deleteApkAfterInstall\":false,\"allowList\":[],"
                     + "\"callerAuthEnabled\":true,\"allowedCallers\":[],\"deniedCallers\":[],"
-                    + "\"fallbackToSystemInstaller\":true,\"floatingIndicator\":true}";
+                    + "\"fallbackToSystemInstaller\":true,\"autoOpenSystemInstaller\":false,"
+                    + "\"floatingIndicator\":true}";
 
     public interface ProgressListener {
         void onProgress(String stage, int index, int total);

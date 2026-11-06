@@ -185,17 +185,19 @@ final class FloatingIndicator {
                 int size = (int) (40 * density);
                 int pad = (int) (8 * density);
                 SciFiSpinner v = new SciFiSpinner(app);
+                // 刻意不加 FLAG_LAYOUT_NO_LIMITS：部分 ROM 会因此让窗口延伸到
+                // 系统栏区域并干扰系统栏配色。窗口保持 40dp、不聚焦、不可触摸，
+                // 落在内容区左上角（状态栏下方），不覆盖也不改变系统栏。
                 WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                         size, size,
                         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                 | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                         PixelFormat.TRANSLUCENT);
                 lp.gravity = Gravity.TOP | Gravity.START;
                 lp.x = pad;
-                lp.y = statusBarHeight(app) + pad;
+                lp.y = pad;
                 wm.addView(v, lp);
                 overlayWm = wm;
                 overlayView = v;
@@ -242,12 +244,4 @@ final class FloatingIndicator {
         });
     }
 
-    private static int statusBarHeight(Context c) {
-        try {
-            int id = c.getResources().getIdentifier("status_bar_height", "dimen", "android");
-            return id > 0 ? c.getResources().getDimensionPixelSize(id) : 0;
-        } catch (Throwable ignored) {
-            return 0;
-        }
-    }
 }

@@ -15,23 +15,36 @@
     </style>
 
     <!--
-      外部安装意图的入口：Theme.NoDisplay 让系统完全不为它创建窗口 / surface，
-      因此即便 onCreate 里同步复制安装包耗时，屏幕上也不会出现任何全屏窗口，
-      更不会把状态栏、导航栏染黑或吞掉前台触摸。
+      外部安装意图的入口。
 
-      不要再改成「普通窗口 + 代码把尺寸压到 1x1」：Activity 主窗口
-      (TYPE_BASE_APPLICATION) 在不少 ROM 上会被强制回 MATCH_PARENT，
-      配合 @null / 透明背景就会合成出整屏纯黑 —— 这正是上一版的黑屏来源。
+      重要经验：单靠 Theme.NoDisplay（windowNoDisplay=true）在部分国产 ROM 上
+      并不可靠 —— 系统仍会为它创建一个全屏 translucent 窗口，抢焦点、吞触摸，
+      并把状态栏/导航栏刷成黑色；用户必须按返回键把它销毁才能继续操作。
+
+      因此这里做两层保证：
+      1) 主题层：显式 translucent + floating + 透明背景 + 不绘制系统栏背景，
+         即便 ROM 真的创建了窗口，它也不会是 opaque 黑屏、不会接管系统栏配色；
+      2) 代码层：SilentInstallActivity.onCreate 把窗口压到 1x1、加
+         FLAG_NOT_FOCUSABLE / FLAG_NOT_TOUCHABLE / FLAG_NOT_TOUCH_MODAL、
+         清 FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS，彻底做到不抢焦点、不吞触摸、
+         不染黑系统栏，并且立刻 finish。
+
+      两层互相独立，任何一层生效都能保证屏幕上没有可感知的窗口。
     -->
     <style name="Theme.SilentEntry" parent="android:style/Theme.NoDisplay">
-        <item name="android:windowBackground">@null</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowDisablePreview">true</item>
         <item name="android:colorBackgroundCacheHint">@null</item>
-        <item name="android:windowActionBar">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">false</item>
     </style>
 
     <!-- 首次调用的授权卡片：整条链路唯一需要用户交互的界面，居中对话框 + dim 是合理的 -->

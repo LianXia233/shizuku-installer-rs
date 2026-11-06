@@ -51,6 +51,7 @@ public final class SettingsActivity extends Activity {
     private Switch swCallerAuth;
     private Switch swFloating;
     private Switch swFallback;
+    private Switch swAutoOpen;
     private ListView appList;
     private AppAdapter adapter;
     private JSONObject cachedConfig;
@@ -86,6 +87,7 @@ public final class SettingsActivity extends Activity {
         swCallerAuth = findViewById(R.id.swCallerAuth);
         swFloating = findViewById(R.id.swFloating);
         swFallback = findViewById(R.id.swFallback);
+        swAutoOpen = findViewById(R.id.swAutoOpen);
         appList = findViewById(R.id.appList);
 
         adapter = new AppAdapter();
@@ -162,6 +164,25 @@ public final class SettingsActivity extends Activity {
                 saveConfig();
             }
         });
+        swAutoOpen.setOnCheckedChangeListener((b, checked) -> {
+            if (suppress) {
+                return;
+            }
+            if (checked) {
+                new AlertDialog.Builder(this)
+                        .setTitle(R.string.auto_open_title)
+                        .setMessage(R.string.auto_open_warn)
+                        .setPositiveButton(R.string.auto_open_keep, null)
+                        .setNegativeButton(R.string.auto_open_cancel, (d, w) -> {
+                            suppress = true;
+                            b.setChecked(false);
+                            suppress = false;
+                            saveConfig();
+                        })
+                        .show();
+            }
+            saveConfig();
+        });
         swConfirm.setOnCheckedChangeListener((b, checked) -> {
             if (!suppress) {
                 saveConfig();
@@ -227,6 +248,7 @@ public final class SettingsActivity extends Activity {
         swCallerAuth.setChecked(cfg.optBoolean("callerAuthEnabled", true));
         swFloating.setChecked(cfg.optBoolean("floatingIndicator", true));
         swFallback.setChecked(cfg.optBoolean("fallbackToSystemInstaller", true));
+        swAutoOpen.setChecked(cfg.optBoolean("autoOpenSystemInstaller", false));
         swConfirm.setChecked(cfg.optBoolean("confirmBeforeInstall", false));
         suppress = false;
         tvAuthWarn.setVisibility(swCallerAuth.isChecked() ? View.GONE : View.VISIBLE);
@@ -306,6 +328,7 @@ public final class SettingsActivity extends Activity {
                     .put("callerAuthEnabled", swCallerAuth.isChecked())
                     .put("floatingIndicator", swFloating.isChecked())
                     .put("fallbackToSystemInstaller", swFallback.isChecked())
+                    .put("autoOpenSystemInstaller", swAutoOpen.isChecked())
                     .put("confirmBeforeInstall", swConfirm.isChecked());
             call("setConfig", new JSONObject().put("config", patch));
         } catch (JSONException ignored) {

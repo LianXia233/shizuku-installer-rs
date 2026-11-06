@@ -50,19 +50,23 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 | F-06 | 安装日志：自动记录、历史查看、导出分享、清空 | `logbook.rs`, `InstallLogStore`, `LogActivity` |
 | F-07 | **调用方授权**：外部应用首次调用弹窗询问，设置页可勾选允许哪些应用 | `auth.rs`, `CallerAuthActivity`, `SettingsActivity` |
 | F-08 | **无遮罩后台指示**：左上角科幻风旋转指示器，点击穿透、不染黑系统栏；悬浮窗权限可由 Shizuku 自动开启 | `FloatingIndicator`, `SciFiSpinner` |
-| F-09 | **失败降级**：静默安装失败时自动拉起系统安装界面 | `SilentTask`, `Config` |
+| F-09 | **失败降级（默认不打断）**：静默安装失败时只发一条可点击通知，点通知才进系统安装器；可显式开启「自动打开」 | `SilentTask`, `Notifier`, `Config` |
 | F-10 | **中文展示**：通知、日志、错误原因显示应用实际名称与中文说明 | `AppNames`, `apk_meta.rs`, `util.rs`, `logbook.rs` |
 | F-11 | **写入兜底**：stdin 流式写入失败时自动改用文件路径写入，适配不同 ROM | `install.rs`, `plan.rs`, `ShizukuBridge` |
 
 ### 静默安装流程
 
 - 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `SEND_MULTIPLE` / `DELETE` / `UNINSTALL_PACKAGE`
-  意图由 `SilentInstallActivity` 接管。它使用 `Theme.NoDisplay`：系统**根本不为其创建窗口或
-  surface**，因此不调用 `setContentView`、也不碰 `getWindow()`，在 `onCreate` 内立即 finish。
-  即便此处同步复制安装包耗时，屏幕上也不存在本应用的任何窗口，不会出现整屏黑、
-  状态栏 / 导航栏变黑、点击卡住或把本应用切到前台的问题。
-  （不要用「普通窗口 + 代码把尺寸压到 1x1」：Activity 主窗口在多数 ROM 上会被强制回
-  MATCH_PARENT，不透明 surface 上的透明背景合成后就是纯黑。）
+  意图由 `SilentInstallActivity` 接管。它**不依赖任何主题的「不显示窗口」承诺**：主题层保持
+  translucent + floating + 透明背景 + 不绘制系统栏背景，代码层在 `onCreate` 里显式把窗口压到
+  1x1、加 `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE | FLAG_NOT_TOUCH_MODAL`、清
+  `FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS` 与 `FLAG_DIM_BEHIND`、系统栏色置透明，然后立即 finish。
+  这样即便 ROM 忽略 `windowNoDisplay` 仍创建了窗口，它也不抢焦点、不吞触摸、不染黑系统栏，
+  用户无需按返回键。前提是主题必须是 translucent：`windowIsTranslucent=false` + `@null` 背景
+  会拿到 opaque surface 并合成整屏纯黑。
+- 「按返回才能继续操作」是**顶层存在可聚焦窗口**的确定信号：系统悬浮窗是
+  `FLAG_NOT_FOCUSABLE`，按返回不会作用于它；只有 Activity 窗口会接收返回键。
+  因此静默链路在正常路径上不启动任何 Activity —— 失败降级默认也只发通知。
 - **外部 URI 私有化**：调用方通过 `FLAG_GRANT_READ_URI_PERMISSION` 授予的读权限只在其
   Intent 对应的 Activity 存活期间有效。入口在仍持有权限时把安装包复制到应用私有缓存，
   并由自家只读 `StagedProvider` 暴露；后台任务全程只读这个 URI，不会因 Activity 销毁、
@@ -79,8 +83,11 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
   Rust 侧 `Config::default()` 的 `confirm_before_install` 为 `false`。
 - 通知标题显示应用的**实际名称**（已安装应用名 > APK 内 `application@label` > 清洗后的文件名），
   失败原因显示中文说明并保留原始错误码；日志同样以中文应用名作为标题。
-- 静默安装失败时，若设置里的「降级为系统安装器」开启，会显式指定系统安装器组件并拉起
-  安装界面，避免再次匹配到本应用自己的 intent-filter；通知点击也可直接进入该界面。
+- 静默安装失败时，若「提供系统安装器入口」开启，**默认只发一条可点击通知**，点通知才
+  显式进入系统安装器组件（排除本应用自己的 intent-filter）。之所以不自动 `startActivity`：
+  系统安装器 / 选择器是可聚焦窗口，会覆盖前台应用、把状态栏与导航栏染黑，且不按返回不会
+  消失，与「静默」语义直接冲突。确有需要可在设置里打开「失败时自动打开系统安装器」
+  （默认关闭，开启时有风险提示）。降级方式会写入安装日志便于排查。
 
 ### 调用方授权
 
@@ -167,7 +174,7 @@ CI 见 `.github/workflows/build.yml`。
 5. 安装期间停留在当前应用，通知栏显示「XXX 正在安装中」及进度，
    屏幕左上角有一个小旋转指示器；不会跳到主界面。
 6. 安装结果更新同一条通知；成功可一键启动，失败显示中文原因，
-   并按需自动打开系统安装界面供手动确认。
+   并可点击通知改用系统安装器手动安装（默认不会自动弹出界面）。
 7. 卸载意图（`package:` URI）同样静默执行；应用内也可输入包名手动卸载。
 8. 打开「安装日志」查看每一次操作的时间、应用名、结果、耗时与原因，可导出或清空。
 

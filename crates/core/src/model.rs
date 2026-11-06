@@ -160,8 +160,13 @@ pub struct Config {
     pub allowed_callers: Vec<String>,
     /// 已被明确拒绝的调用方包名。
     pub denied_callers: Vec<String>,
-    /// 静默安装失败后自动降级为系统安装器。
+    /// 静默安装失败后提供「改用系统安装器」的通知入口。
     pub fallback_to_system_installer: bool,
+    /// 失败时是否自动拉起系统安装器界面。
+    /// 默认关闭：自动 startActivity 会弹出一个可聚焦窗口，遮挡前台应用、
+    /// 染黑系统栏并要求用户按返回才能继续，与「静默」语义冲突。
+    /// 用户主动开启时才自动拉起，否则只在通知里提供点击入口。
+    pub auto_open_system_installer: bool,
     /// 安装期间显示左上角悬浮进度指示。
     pub floating_indicator: bool,
 }
@@ -177,6 +182,7 @@ impl Default for Config {
             allowed_callers: Vec::new(),
             denied_callers: Vec::new(),
             fallback_to_system_installer: true,
+            auto_open_system_installer: false,
             floating_indicator: true,
         }
     }

@@ -183,7 +183,11 @@ final class Notifier {
                 .setTimeoutAfter(15_000));
     }
 
-    /** 静默失败后的降级提示：点击通知即可进入系统安装界面。 */
+    /**
+     * 静默失败后的降级提示：只发通知，点击才进入系统安装界面。
+     * 不在这里 startActivity —— 自动弹出的安装界面是可聚焦窗口，会遮挡前台
+     * 应用、染黑系统栏并需要按返回才能恢复，与静默安装的语义冲突。
+     */
     static void fallback(Context c, String label, String detail, Intent installIntent) {
         ensureChannels(c);
         String title = c.getString(R.string.notify_fallback_title, label);

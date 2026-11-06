@@ -1,5 +1,6 @@
 package io.github.lianxia233.shizukuinst;
 
+import android.content.ClipData;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -30,6 +31,8 @@ final class SilentTask implements Runnable {
     private volatile String label;
     private boolean floating = true;
     private boolean fallback = true;
+    /** 默认不自动弹系统安装器界面，避免遮挡前台应用（见 model.rs 注释）。 */
+    private boolean autoOpen = false;
 
     private SilentTask(Context app, boolean uninstall, List<String> uris,
                        String targetPackage, String caller, String label) {
@@ -77,9 +80,10 @@ final class SilentTask implements Runnable {
             if (cfg != null) {
                 floating = cfg.optBoolean("floatingIndicator", true);
                 fallback = cfg.optBoolean("fallbackToSystemInstaller", true);
+                autoOpen = cfg.optBoolean("autoOpenSystemInstaller", false);
             }
         } catch (Throwable ignored) {
-            // 配置读取失败时保持默认：显示指示器、失败可降级
+            // 配置读取失败时保持默认：显示指示器、只发降级通知，绝不自动弹界面
         }
     }
 
@@ -196,12 +200,40 @@ final class SilentTask implements Runnable {
         if (!uninstall && fallback && uris != null && !uris.isEmpty()) {
             Intent i = buildSystemInstallIntent(uris.get(0));
             if (i != null) {
+                // 默认只发一条可点击的通知：用户点通知才进入系统安装器。
+                // 过去这里无条件 app.startActivity(i)，会弹出一个可聚焦窗口，
+                // 染黑状态栏/导航栏、吞掉触摸且不按返回不消失 —— 这正是
+                // 实机反馈「屏幕卡住、需要按返回」的持续窗口源。
                 Notifier.fallback(app, label, zh, i);
-                try {
-                    app.startActivity(i);
-                } catch (Throwable ignored) {
+                recordFallback(autoOpen);
+                if (autoOpen) {
+                    try {
+                        app.startActivity(i);
+                    } catch (Throwable ignored) {
+                    }
                 }
             }
+        }
+    }
+
+    /** 把降级方式写入日志，便于实机定位「到底是哪个窗口弹出来了」。 */
+    private void recordFallback(boolean opened) {
+        try {
+            JSONObject e = new JSONObject()
+                    .put("op", "install")
+                    .put("label", label)
+                    .put("appName", label)
+                    .put("source", "silent")
+                    .put("ok", false)
+                    .put("code", "FALLBACK")
+                    .put("detail", opened
+                            ? "已自动打开系统安装器（设置中开启）"
+                            : "仅通知，未自动拉起任何界面；点击通知可改用系统安装器");
+            if (caller != null && !caller.isEmpty()) {
+                e.put("caller", caller);
+            }
+            call("logRecord", e.toString());
+        } catch (Throwable ignored) {
         }
     }
 
@@ -233,6 +265,10 @@ final class SilentTask implements Runnable {
             }
             out.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                     | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // 通知的 PendingIntent 由系统代发，部分 Android 版本只按 ClipData
+            // 传递 URI 临时授权；同时设置 data 与 ClipData 才能确保系统安装器
+            // 能读到自家 StagedProvider 的 content://。
+            out.setClipData(ClipData.newUri(app.getContentResolver(), "安装包", u));
             return out;
         } catch (Throwable ignored) {
             return null;
