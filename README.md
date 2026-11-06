@@ -217,7 +217,14 @@ python3 scripts/gen_icons.py                    # 从 icons/app_icon_source.png 
 python3 scripts/gen_axml_fixture.py             # 重新生成测试样本
 ```
 
-CI 见 `.github/workflows/build.yml`。
+CI 见 `.github/workflows/build.yml`（`push main` 或手动 `workflow_dispatch` 触发，
+产物为 `ShizukuInstaller.apk`）。**构建完成后默认创建 GitHub Release 并附上 APK**：
+tag 形如 `v1.0.2-build.<run_number>`（每次构建唯一，避免同名 tag 冲突；重跑同一
+run 时改为覆盖上传同名资产），由 runner 预装的 `gh` CLI 完成，依赖
+`permissions: contents: write`；不使用第三方 release action，避免引入新的
+Node.js 运行时弃用警告。第一方 action 已升级到声明 `node24` 运行时的版本：
+`actions/checkout@v5`、`actions/setup-java@v5`、`actions/upload-artifact@v6`
+（注意 `upload-artifact@v5` 仍声明 `node20`，不能消除弃用警告）。
 
 ## 5. 使用
 
