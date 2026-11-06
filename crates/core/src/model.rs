@@ -103,6 +103,9 @@ pub struct InstallPlan {
     pub create_args: Vec<String>,
     pub package_hint: Option<String>,
     pub version_hint: Option<String>,
+    /// best-effort 从 binary manifest 的 application@label 读到的应用名。
+    #[serde(default)]
+    pub label_hint: Option<String>,
     pub requires_confirmation: bool,
 }
 
@@ -146,17 +149,36 @@ pub struct Progress {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Config {
     pub confirm_before_install: bool,
     pub delete_apk_after_install: bool,
     pub allow_list: Vec<String>,
+    /// 调用方授权总开关：开启后，未被允许的来源不能「直接」静默安装。
+    pub caller_auth_enabled: bool,
+    /// 已获永久授权的调用方包名。
+    pub allowed_callers: Vec<String>,
+    /// 已被明确拒绝的调用方包名。
+    pub denied_callers: Vec<String>,
+    /// 静默安装失败后自动降级为系统安装器。
+    pub fallback_to_system_installer: bool,
+    /// 安装期间显示左上角悬浮进度指示。
+    pub floating_indicator: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        // 静默安装语义：默认不要求任何安装前确认；确认是可选的高级开关。
-        Self { confirm_before_install: false, delete_apk_after_install: false, allow_list: Vec::new() }
+        // 静默安装语义：默认不要求任何安装前确认；但外部调用方必须先授权。
+        Self {
+            confirm_before_install: false,
+            delete_apk_after_install: false,
+            allow_list: Vec::new(),
+            caller_auth_enabled: true,
+            allowed_callers: Vec::new(),
+            denied_callers: Vec::new(),
+            fallback_to_system_installer: true,
+            floating_indicator: true,
+        }
     }
 }
 

@@ -2,19 +2,27 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Shizuku API 权限（唯一需要的特权来源） -->
+    <!-- Shizuku API 权限（唯一的特权执行来源） -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <!-- Android 13+ 通知权限 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 安装期间的左上角小指示器；未授权时自动降级为纯通知，不影响安装 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 设置页需要完整枚举系统应用列表（非 Google Play 分发，仅本机授权用途） -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
-    <!-- Android 11+ 包可见性：仅声明实际需要探测的目标 -->
+    <!-- Android 11+ 包可见性 -->
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
         </intent>
     </queries>
 

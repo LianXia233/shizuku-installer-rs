@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/authRoot"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:minWidth="288dp"
+    android:orientation="vertical"
+    android:background="@drawable/bg_card"
+    android:padding="20dp"
+    android:elevation="8dp">
+
+    <TextView
+        android:id="@+id/authTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/auth_dialog_title"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary" />
+
+    <TextView
+        android:id="@+id/authMessage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:lineSpacingExtra="3dp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="12dp" />
+
+    <TextView
+        android:id="@+id/authCaller"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="11sp"
+        android:singleLine="true"
+        android:ellipsize="middle"
+        android:textColor="@color/text_muted"
+        android:layout_marginTop="8dp" />
+
+    <CheckBox
+        android:id="@+id/authRemember"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="40dp"
+        android:text="@string/auth_remember"
+        android:textSize="13sp"
+        android:textColor="@color/text_primary"
+        android:layout_marginTop="10dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="10dp">
+
+        <Button
+            android:id="@+id/btnDeny"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:text="@string/auth_deny"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:stateListAnimator="@null"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary" />
+
+        <Space
+            android:layout_width="10dp"
+            android:layout_height="1dp" />
+
+        <Button
+            android:id="@+id/btnAllow"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:text="@string/auth_allow"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textAllCaps="false"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:stateListAnimator="@null"
+            android:background="@drawable/btn_primary"
+            android:textColor="@color/on_brand" />
+    </LinearLayout>
+</LinearLayout>

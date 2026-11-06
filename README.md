@@ -15,13 +15,17 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 ```
 ┌──────────────────────────── Android App ────────────────────────────┐
 │  MainActivity / SettingsActivity / LogActivity (Java, UI 与生命周期) │
+│  SilentInstallActivity (Java, 调用方识别 + 首次授权卡片)             │
+│  SilentTask (Java, 进程级后台任务) · FloatingIndicator (小悬浮窗)   │
+│  Notifier (Java, 通知) · AppNames (Java, 应用名与错误文案)          │
 │        │  RustCore.dispatch(method, argsJson) : String               │
 │        ▼                                                             │
 │  libshizuku_core.so  (crates/android-ffi, JNI, Rust)                 │
 │        │  PlatformBridge.call(method, args) -> JSON                  │
 │        ▼                                                             │
 │  shizuku-core (Rust, 纯逻辑, host 可单测)                            │
-│   状态机 · 命令构造 · 会话流程 · 归档拆分 · 结果解析 · 配置 · 日志    │
+│   状态机 · 命令构造 · 会话流程 · 归档拆分 · 结果解析                 │
+│   配置 · 调用方授权策略 · 日志                                       │
 │        │  ShizukuBridge.call(...) 回调 Java                          │
 │        ▼                                                             │
 │  ShizukuBridge (Java, 仅 I/O): Shizuku / ContentResolver / Process   │
@@ -30,7 +34,7 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 ```
 
 只有一个 JNI 入口、一个平台桥接原语，便于审计与测试。
-外部安装 / 卸载意图由 `SilentInstallActivity`（透明无界面）接管，`Notifier` 负责进度通知；
+外部安装 / 卸载意图由 `SilentInstallActivity` 接管，安装任务在应用进程后台线程执行；
 主界面只在用户主动点击图标时出现。
 
 ## 2. 功能
@@ -41,30 +45,52 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 | F-02 | 静默安装（无确认、不弹界面）：单 APK / 多 split / `.apks` / `.xapk` | `install.rs`, `archive.rs`, `plan.rs` |
 | F-03 | 静默卸载（含保留数据） | `uninstall.rs` |
 | F-04 | 免确认包名白名单；安装前确认为可选开关（默认关闭） | `config.rs`, `SettingsActivity` |
-| F-05 | 通知气泡显示安装中 / 进度 / 结果，错误复制、一键启动、查看日志 | `Notifier`, `MainActivity` |
+| F-05 | 通知气泡显示安装中 / 进度 / 结果，一键启动、查看日志 | `Notifier`, `SilentTask` |
 | F-06 | 安装日志：自动记录、历史查看、导出分享、清空 | `logbook.rs`, `InstallLogStore`, `LogActivity` |
+| F-07 | **调用方授权**：外部应用首次调用弹窗询问，设置页可勾选允许哪些应用 | `auth.rs`, `SilentInstallActivity`, `SettingsActivity` |
+| F-08 | **无遮罩后台指示**：左上角 40dp 科幻风旋转指示器，不拦截触摸、不染黑系统栏 | `FloatingIndicator`, `SciFiSpinner` |
+| F-09 | **失败降级**：静默安装失败时自动拉起系统安装界面 | `SilentTask`, `Config` |
+| F-10 | **中文展示**：通知、日志、错误原因显示应用实际名称与中文说明 | `AppNames`, `apk_meta.rs`, `util.rs`, `logbook.rs` |
 
 ### 静默安装流程
 
-- 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `DELETE` 意图由 `SilentInstallActivity` 接管：
-  透明主题 + `FLAG_NOT_TOUCHABLE` / `FLAG_NOT_FOCUSABLE`，无布局、无转场动画、不进最近任务，
-  用户停留在当前应用，界面不会被拉起。
+- 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `SEND_MULTIPLE` / `DELETE` / `UNINSTALL_PACKAGE`
+  意图由 `SilentInstallActivity` 接管。它把窗口缩到 **1x1** 并设为
+  `FLAG_NOT_TOUCHABLE` / `FLAG_NOT_FOCUSABLE`，不使用半透明全屏窗口，
+  因此不会出现状态栏 / 导航栏变黑或点击屏幕卡住的问题。
+- 入口通过 `getCallingPackage()`、`getReferrer()` 与 `EXTRA_REFERRER*` 尽力识别调用方；
+  识别不到一律视为匿名来源。Rust `auth::decide` 返回 `ALLOW` / `ASK` / `DENY`：
+  - `ALLOW`：直接执行；
+  - `ASK`：把窗口放大为一张居中小卡片询问「允许 / 拒绝」，可勾选「记住本次选择」；
+  - `DENY`：静默阻止并记一条日志。
+  匿名来源**永远不能被永久记住**，否则一次允许会放行后续所有匿名调用。
+- 用户完成授权（或已获授权）后，入口立即销毁，安装交给 `SilentTask` 在应用进程后台线程
+  串行执行。整个安装期间屏幕上只有通知与左上角的小指示器，不存在任何 Activity 窗口。
 - 默认不做任何安装前确认：静默入口的 `skipConfirm` 恒为 `true`，
   Rust 侧 `Config::default()` 的 `confirm_before_install` 为 `false`。
-  主界面与设置里的「安装前确认」开关默认关闭，只在主动打开时才生效。
-- `Notifier` 发一条 heads-up 气泡通知（静音、无震动），标题为「<安装包名> 正在安装中」，
-  带进度条；完成或失败时更新同一条通知，成功可一键启动应用，任何结果都可点「查看日志」。
-- 失败不会拉起任何界面，原始错误文本保留在通知详情与安装日志里。
+- 通知标题显示应用的**实际名称**（已安装应用名 > APK 内 `application@label` > 清洗后的文件名），
+  失败原因显示中文说明并保留原始错误码；日志同样以中文应用名作为标题。
+- 静默安装失败时，若设置里的「降级为系统安装器」开启，会显式指定系统安装器组件并拉起
+  安装界面，避免再次匹配到本应用自己的 intent-filter；通知点击也可直接进入该界面。
+
+### 调用方授权
+
+- 设置页列出系统已安装应用（用户应用在前），每个应用一个开关：
+  开启 = 允许直接静默安装，关闭 = 明确拒绝。可搜索、可一键清空所有授权记录。
+- 授权总开关默认开启；关闭后任何外部应用都可直接发起静默安装，界面会给出风险提示。
+- 白名单、黑名单、首次询问策略全部由 Rust `auth.rs` 判定并做 host 侧单测，
+  Java 层只负责弹窗与渲染。
 
 ### 安装日志
 
 - Rust 核心在 `install::execute_with_context` / `uninstall::uninstall_with_context`
-  的**成功与失败两条路径**上生成结构化记录：操作类型、安装包名/包名/版本、分片数与总大小、
-  结果码、原始输出（裁剪至 2000 字符）、各阶段、耗时、会话 id、触发来源（`silent` / `ui`）。
+  的**成功与失败两条路径**上生成结构化记录：操作类型、应用名、包名/版本、分片数与总大小、
+  结果码、原始输出（裁剪至 2000 字符）、耗时、会话 id、触发来源、调用方。
 - 记录通过 `PlatformBridge` 的 `logAppend` 落到 `filesDir/logs/install-log.jsonl`，
   Java 侧补时间戳与可读时间，保留最近 **500** 条，原子替换写入、统一 LF。
 - 日志写入是旁路操作：持久化失败不影响安装结果。
-- 准备阶段失败（未进入核心执行）由静默入口通过 `logRecord` 补记，保证后台链路任何结果都有记录。
+- 准备阶段失败、授权被拒（未进入核心执行）由静默入口通过 `logRecord` 补记，
+  保证后台链路任何结果都有记录。
 - 应用内「安装日志」页可查看历史、导出为纯文本分享、一键清空；结果通知带「查看日志」动作。
 
 ## 3. 关键实现选择
@@ -75,10 +101,12 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
   通过 `IRemoteProcess` 的 `ParcelFileDescriptor` 三路流完成双向 I/O。
 - 输入统一走 SAF `content://`；`stat` / `archiveEntries` / `readBytes`
   只做字节与元数据搬运，所有策略判断在 Rust。
-- 安装前展示的包名/版本由 Rust 自写的 binary-XML 读取器解析
+- 安装前展示的包名/版本/应用名由 Rust 自写的 binary-XML 读取器解析
   `AndroidManifest.xml`，解析失败自动降级、不阻塞安装。
 - 所有拼进 shell 的参数由 Rust 生成，包名经 `is_valid_package_name` 校验，避免注入。
 - 写失败调用 `pm install-abandon` 回滚会话。
+- 悬浮指示器使用 `TYPE_APPLICATION_OVERLAY` 的小窗口（非 Activity 窗口），
+  无悬浮窗权限时静默跳过，不影响安装本身。
 - NDK r27 + `max-page-size=16384`，满足 Android 15/16 的 **16KB 内存页**要求。
 - UI 为纯原生 View + vector/gradient/ripple drawable，无额外 UI 框架依赖；深浅色主题齐备。
 
@@ -111,23 +139,31 @@ CI 见 `.github/workflows/build.yml`。
 
 1. 安装并启动 Shizuku（无线调试或 root），确认服务运行中。
 2. 首次打开本应用，完成 Shizuku 授权并允许通知权限（进度气泡需要）。
-3. 之后从文件管理器用「打开方式 / 分享」把 APK 交给本应用即可：无确认框、不会跳到主界面，
-   只在通知栏显示「XXX 正在安装中」及进度。
-4. 也可在应用内「选择安装包并安装」，支持多选 APK / `.apks` / `.xapk`。
-5. 安装结果更新同一条通知；成功可一键启动，失败可点开查看原始错误。
-6. 卸载意图（`package:` URI）同样静默执行；应用内也可输入包名手动卸载。
-7. 打开「安装日志」查看每一次操作的时间、结果、耗时与原始输出，可导出或清空。
+3. 在「设置」里确认静默安装授权总开关，并勾选允许发起静默安装的应用；
+   若希望看到左上角指示器，可授予「显示在其他应用上层」权限。
+4. 从文件管理器用「打开方式 / 分享」把 APK 交给本应用：已授权来源直接后台执行，
+   首次调用会弹一张小卡片询问是否允许，之后不再打扰。
+5. 安装期间停留在当前应用，通知栏显示「XXX 正在安装中」及进度，
+   屏幕左上角有一个小旋转指示器；不会跳到主界面。
+6. 安装结果更新同一条通知；成功可一键启动，失败显示中文原因，
+   并按需自动打开系统安装界面供手动确认。
+7. 卸载意图（`package:` URI）同样静默执行；应用内也可输入包名手动卸载。
+8. 打开「安装日志」查看每一次操作的时间、应用名、结果、耗时与原因，可导出或清空。
 
 ## 6. 兼容性
 
 | 平台要求 | 处理 |
 |---|---|
 | Android 16 (API 36) | targetSdk 36；`android:exported` 显式声明；16KB page size |
-| Android 15 (API 35) | edge-to-edge：`fitsSystemWindows` + 系统栏配色 |
+| Android 15 (API 35) | edge-to-edge：`fitsSystemWindows` + 系统栏配色；小窗口避开状态栏 |
 | Android 14 (API 34) | 无前台服务；`PendingIntent.FLAG_IMMUTABLE` |
 | Android 13 (API 33) | `POST_NOTIFICATIONS` 动态申请；通知渠道；themed icon |
-| Android 11+ (API 30) | `<queries>` 包可见性；全量 SAF，不用 `MANAGE_EXTERNAL_STORAGE` |
-| Android 8+ (API 26) | adaptive icon + 单色图标 |
+| Android 11+ (API 30) | `<queries>` 包可见性；`QUERY_ALL_PACKAGES` 用于设置页枚举应用；全量 SAF |
+| Android 8+ (API 26) | `TYPE_APPLICATION_OVERLAY`；adaptive icon + 单色图标 |
+
+权限说明：`SYSTEM_ALERT_WINDOW` 只用于可选的安装进度小指示器，
+未授予时自动降级为纯通知；`QUERY_ALL_PACKAGES` 只用于设置页展示系统应用列表，
+不上传、不持久化到任何远端。
 
 ## 7. 目录
 

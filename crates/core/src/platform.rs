@@ -127,6 +127,23 @@ pub fn publish_progress(b: &dyn PlatformBridge, stage: &str, index: usize, total
     let _ = b.call("progress", &json!({ "stage": stage, "index": index, "total": total }));
 }
 
+/// 读取系统应用列表（纯 I/O，由平台侧 PackageManager 提供）。
+pub fn installed_apps(b: &dyn PlatformBridge) -> Result<Value> {
+    b.call("installedApps", &json!({}))
+}
+
+/// 把包名解析成应用真实名称（中文）。查不到时返回空串。
+pub fn app_label(b: &dyn PlatformBridge, package: &str) -> Result<String> {
+    let v = b.call("appLabel", &json!({ "package": package }))?;
+    Ok(field_str(&v, "label").to_string())
+}
+
+/// 把调用方标识解析成可展示的名称（用于首次授权弹窗）。
+pub fn caller_label(b: &dyn PlatformBridge, caller: &str) -> Result<String> {
+    let v = b.call("callerLabel", &json!({ "caller": caller }))?;
+    Ok(field_str(&v, "label").to_string())
+}
+
 /// 平台侧墙钟时间（毫秒），用于记录操作耗时。不可用时返回 0，不影响业务逻辑。
 pub fn now_millis(b: &dyn PlatformBridge) -> u64 {
     b.call("now", &json!({}))

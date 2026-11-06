@@ -16,17 +16,21 @@ pub const DEFAULT_LIST_LIMIT: usize = 200;
 
 /// 一次操作的展示上下文，由 UI / 静默入口显式传入。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct OpContext {
-    /// 展示名：安装包文件名或包名。
+    /// 展示名：优先应用真实名称，退回安装包文件名。
     pub label: String,
     /// 触发来源：ui / silent。
     pub source: String,
+    /// 应用真实名称（中文），与包名区分。
+    pub app_name: Option<String>,
+    /// 发起本次静默安装的调用方包名；应用内触发为 null。
+    pub caller: Option<String>,
 }
 
 impl Default for OpContext {
     fn default() -> Self {
-        Self { label: "安装包".into(), source: "ui".into() }
+        Self { label: "安装包".into(), source: "ui".into(), app_name: None, caller: None }
     }
 }
 
@@ -44,9 +48,13 @@ impl OpContext {
         let source = field("source")
             .map(|s| if s == "silent" || s == "ui" { s } else { "ui".into() })
             .unwrap_or_else(|| "ui".into());
+        let app_name = field("appName").map(|s| truncate(&s, 160));
+        // 没有显式 appName 时，把 label 当作应用名（label 已由平台侧解析为中文名）。
         Self {
             label: truncate(&field("label").unwrap_or_else(|| "安装包".into()), 160),
             source,
+            app_name: app_name.clone().or_else(|| field("label").map(|s| truncate(&s, 160))),
+            caller: field("caller").map(|s| truncate(&s, 160)),
         }
     }
 }
@@ -57,6 +65,12 @@ pub struct LogEntry {
     /// install / uninstall
     pub op: String,
     pub label: String,
+    /// 应用真实名称（中文），用于通知 / 日志标题，避免只显示包名。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    /// 发起静默安装的调用方包名。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller: Option<String>,
     pub package: Option<String>,
     pub version: Option<String>,
     pub parts: usize,
@@ -75,6 +89,8 @@ impl Default for LogEntry {
         Self {
             op: "install".into(),
             label: "安装包".into(),
+            app_name: None,
+            caller: None,
             package: None,
             version: None,
             parts: 0,
@@ -95,6 +111,8 @@ impl LogEntry {
         Self {
             op: op.to_string(),
             label: ctx.label.clone(),
+            app_name: ctx.app_name.clone().or_else(|| Some(ctx.label.clone())),
+            caller: ctx.caller.clone(),
             source: ctx.source.clone(),
             ..Self::default()
         }
@@ -104,12 +122,18 @@ impl LogEntry {
     pub fn from_json(a: &Value) -> Self {
         let mut e = Self::default();
         let s = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let opt = |k: &str| a.get(k).and_then(Value::as_str)
+            .map(str::trim).filter(|x| !x.is_empty()).map(|x| truncate(x, 160));
         e.op = match s("op").as_str() {
             "uninstall" => "uninstall".into(),
             _ => "install".into(),
         };
         let label = s("label");
         e.label = if label.is_empty() { "安装包".into() } else { truncate(&label, 160) };
+        e.app_name = opt("appName").or_else(|| {
+            if label.trim().is_empty() { None } else { Some(truncate(label.trim(), 160)) }
+        });
+        e.caller = opt("caller");
         e.package = a.get("package").and_then(Value::as_str).filter(|x| !x.is_empty()).map(str::to_string);
         e.version = a.get("version").and_then(Value::as_str).filter(|x| !x.is_empty()).map(str::to_string);
         e.parts = a.get("parts").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -166,10 +190,16 @@ pub fn export_text(entries: &[Value]) -> String {
         let ok = e.get("ok").and_then(Value::as_bool).unwrap_or(false);
         let op = if s("op") == "uninstall" { "卸载" } else { "安装" };
         let result = if ok { "成功" } else { "失败" };
-        out.push_str(&format!("[{}] {} {} · {}\n", s("time"), op, result, s("label")));
+        // 标题优先展示应用真实名称，包名放到下一行，避免「只显示包名」。
+        let name = {
+            let n = s("appName");
+            if n.is_empty() { s("label") } else { n }
+        };
+        out.push_str(&format!("[{}] {} {} · {}\n", s("time"), op, result, name));
         let mut meta = Vec::new();
-        if !s("package").is_empty() {
-            meta.push(format!("包名 {}", s("package")));
+        let pkg = s("package");
+        if !pkg.is_empty() {
+            meta.push(format!("包名 {}", pkg));
         }
         if !s("version").is_empty() {
             meta.push(format!("版本 {}", s("version")));
@@ -180,9 +210,13 @@ pub fn export_text(entries: &[Value]) -> String {
         }
         let size = e.get("totalSize").and_then(Value::as_u64).unwrap_or(0);
         if size > 0 {
-            meta.push(format!("{} 字节", size));
+            meta.push(format!("大小 {}", crate::util::human_size(size)));
         }
         meta.push(format!("来源 {}", if s("source") == "silent" { "后台静默" } else { "应用内" }));
+        let caller = s("caller");
+        if !caller.is_empty() {
+            meta.push(format!("调用方 {}", caller));
+        }
         let ms = e.get("durationMs").and_then(Value::as_u64).unwrap_or(0);
         meta.push(format!("耗时 {} ms", ms));
         if let Some(id) = e.get("sessionId").and_then(Value::as_i64) {
@@ -192,7 +226,13 @@ pub fn export_text(entries: &[Value]) -> String {
         out.push_str(&meta.join(" · "));
         out.push('\n');
         if !ok {
-            out.push_str(&format!("  错误码 {}\n", s("code")));
+            let code = s("code");
+            let zh = crate::util::error_zh(&code);
+            if zh.is_empty() {
+                out.push_str(&format!("  原因 {}\n", code));
+            } else {
+                out.push_str(&format!("  原因 {}（{}）\n", zh, code));
+            }
         }
         let detail = s("detail").trim().to_string();
         if !detail.is_empty() {

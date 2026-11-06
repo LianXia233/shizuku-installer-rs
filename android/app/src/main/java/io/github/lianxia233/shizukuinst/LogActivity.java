@@ -162,7 +162,13 @@ public final class LogActivity extends Activity {
             TextView badge = v.findViewById(R.id.itemBadge);
             View dot = v.findViewById(R.id.itemDot);
 
-            title.setText(e.optString("label", getString(R.string.log_unknown)));
+            // 标题优先展示应用真实名称（中文），不再只显示文件名或包名
+            String appName = e.optString("appName", "");
+            if (appName.isEmpty() || "null".equals(appName)) {
+                appName = e.optString("label", "");
+            }
+            title.setText(appName.isEmpty() ? getString(R.string.log_unknown) : appName);
+
             StringBuilder m = new StringBuilder();
             String time = e.optString("time", "");
             if (!time.isEmpty()) {
@@ -173,6 +179,10 @@ public final class LogActivity extends Activity {
             if (!pkg.isEmpty() && !"null".equals(pkg)) {
                 m.append("  ·  ").append(pkg);
             }
+            String caller = e.optString("caller", "");
+            if (!caller.isEmpty() && !"null".equals(caller)) {
+                m.append("  ·  ").append(getString(R.string.log_caller, caller));
+            }
             long ms = e.optLong("durationMs", 0);
             if (ms > 0) {
                 m.append("  ·  ").append(ms).append(" ms");
@@ -181,7 +191,9 @@ public final class LogActivity extends Activity {
 
             StringBuilder detailText = new StringBuilder();
             if (!ok) {
-                detailText.append(getString(R.string.log_error_code, e.optString("code", "-")));
+                String code = e.optString("code", "-");
+                String zh = AppNames.errorText(LogActivity.this, code, "");
+                detailText.append(getString(R.string.log_error_code, zh));
             }
             String raw = e.optString("detail", "").trim();
             if (!raw.isEmpty()) {

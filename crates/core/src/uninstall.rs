@@ -30,6 +30,11 @@ pub fn uninstall_with_context(
     if entry.label == "安装包" {
         entry.label = package.trim().to_string();
     }
+    // 平台侧未传 appName 时，至少保证标题是包名而不是空洞的「安装包」；
+    // 真正的应用中文名由 Java 在 context.appName 中提供。
+    if entry.app_name.as_deref() == Some("安装包") || entry.app_name.is_none() {
+        entry.app_name = Some(entry.label.clone());
+    }
     entry.package = Some(package.trim().to_string());
     entry.duration_ms = duration_ms;
     match &result {
@@ -123,7 +128,7 @@ mod tests {
         let b = MockBridge::new();
         authorized(&b);
         b.push("exec", json!({"code":0,"stdout":"Success","stderr":""}));
-        let ctx = OpContext { label: "dev.example.app".into(), source: "silent".into() };
+        let ctx = OpContext { label: "dev.example.app".into(), source: "silent".into(), ..Default::default() };
         let o = uninstall_with_context(&b, "dev.example.app", &UninstallOptions::default(), &ctx)
             .unwrap();
         assert!(o.ok);

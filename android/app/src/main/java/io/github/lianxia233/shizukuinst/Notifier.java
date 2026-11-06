@@ -161,6 +161,54 @@ final class Notifier {
         post(c, b);
     }
 
+    /** 调用方被拒绝：明确告知「已阻止」，而不是伪装成安装失败。 */
+    static void denied(Context c, String label, String callerLabel) {
+        ensureChannels(c);
+        String who = callerLabel == null || callerLabel.trim().isEmpty()
+                ? c.getString(R.string.caller_unknown) : callerLabel.trim();
+        String title = c.getString(R.string.notify_auth_denied_title);
+        String text = c.getString(R.string.auth_denied, who);
+        if (!allowed(c)) {
+            toast(c, text);
+            return;
+        }
+        post(c, builder(c, CH_RESULT)
+                .setSmallIcon(R.drawable.ic_action_notification)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setTimeoutAfter(15_000));
+    }
+
+    /** 静默失败后的降级提示：点击通知即可进入系统安装界面。 */
+    static void fallback(Context c, String label, String detail, Intent installIntent) {
+        ensureChannels(c);
+        String title = c.getString(R.string.notify_fallback_title, label);
+        String text = detail == null || detail.trim().isEmpty()
+                ? c.getString(R.string.notify_fallback_text) : detail.trim();
+        if (!allowed(c)) {
+            toast(c, title);
+            return;
+        }
+        Notification.Builder b = builder(c, CH_RESULT)
+                .setSmallIcon(R.drawable.ic_action_notification)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC);
+        if (installIntent != null) {
+            PendingIntent pi = PendingIntent.getActivity(c, 31, installIntent,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            b.setContentIntent(pi);
+        }
+        post(c, b);
+    }
+
     private static String stageText(Context c, String stage) {
         if (stage == null) {
             return c.getString(R.string.notify_stage_prepare);

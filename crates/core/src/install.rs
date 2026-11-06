@@ -84,13 +84,14 @@ pub fn prepare(
     }
 
     // best-effort：仅对直接传入的 APK 解析 binary manifest；归档场景跳过。
-    let (mut package_hint, mut version_hint) = (None, None);
+    let (mut package_hint, mut version_hint, mut label_hint) = (None, None, None);
     if let Some(StdinSource::Uri { uri }) = parts.first().map(|p| &p.stdin) {
         let src = StdinSource::ArchiveEntry { uri: uri.clone(), entry: MANIFEST_ENTRY.into() };
         if let Ok(bytes) = platform::read_bytes(b, &src, META_LIMIT) {
             if let Some(m) = apk_meta::parse_axml(&bytes) {
                 package_hint = m.package;
                 version_hint = m.version_name;
+                label_hint = m.label;
             }
         }
     }
@@ -101,6 +102,7 @@ pub fn prepare(
         create_args: plan::install_create_args(opts, total_size),
         package_hint: package_hint.clone(),
         version_hint,
+        label_hint,
         requires_confirmation: config::needs_confirmation(
             cfg,
             package_hint.as_deref(),
@@ -132,6 +134,15 @@ pub fn execute_with_context(
     let duration_ms = platform::now_millis(b).saturating_sub(started);
 
     let mut entry = LogEntry::new("install", ctx);
+    // 平台侧没能解析出应用名时，用 binary manifest 的 label 兜底。
+    if let Some(l) = &plan_data.label_hint {
+        let cur = entry.app_name.as_deref().unwrap_or("").to_ascii_lowercase();
+        if cur.ends_with(".apk") || cur.ends_with(".apks") || cur.ends_with(".xapk")
+            || cur == "安装包" || cur.is_empty() {
+            entry.app_name = Some(l.clone());
+            entry.label = l.clone();
+        }
+    }
     entry.package = plan_data.package_hint.clone();
     entry.version = plan_data.version_hint.clone();
     entry.parts = plan_data.parts.len();
@@ -233,6 +244,7 @@ pub fn describe(plan_data: &InstallPlan) -> serde_json::Value {
         "totalSizeHuman": util::human_size(plan_data.total_size),
         "package": plan_data.package_hint,
         "version": plan_data.version_hint,
+        "appLabel": plan_data.label_hint,
         "requiresConfirmation": plan_data.requires_confirmation,
         "splitNames": plan_data.parts.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
     })
@@ -302,7 +314,7 @@ mod tests {
             }],
             total_size: 10,
             create_args: plan::install_create_args(&InstallOptions::default(), 10),
-            package_hint: None, version_hint: None, requires_confirmation: false,
+            package_hint: None, version_hint: None, label_hint: None, requires_confirmation: false,
         };
         let out = execute(&b, &plan_data, &InstallOptions::default()).unwrap();
         assert!(out.outcome.ok);
@@ -325,6 +337,7 @@ mod tests {
             create_args: plan::install_create_args(&InstallOptions::default(), 10),
             package_hint: Some("dev.example.app".into()),
             version_hint: Some("1.0".into()),
+            label_hint: None,
             requires_confirmation: false,
         }
     }
@@ -336,7 +349,7 @@ mod tests {
         b.push("exec", json!({"code":0,"stdout":"Success: created install session [777]","stderr":""}));
         b.push("exec", json!({"code":0,"stdout":"Success: streamed 10 bytes","stderr":""}));
         b.push("exec", json!({"code":0,"stdout":"Success","stderr":""}));
-        let ctx = OpContext { label: "demo.apk".into(), source: "silent".into() };
+        let ctx = OpContext { label: "demo.apk".into(), source: "silent".into(), ..Default::default() };
         let out = execute_with_context(&b, &sample_plan(), &InstallOptions::default(), &ctx).unwrap();
         assert!(out.outcome.ok);
         let (_, a) = b.calls().into_iter().find(|(m, _)| m == "logAppend").unwrap();
@@ -350,11 +363,27 @@ mod tests {
     }
 
     #[test]
+    fn execute_prefers_axml_app_name_over_file_name() {
+        let b = MockBridge::new();
+        for _ in 0..2 { authorized(&b); }
+        b.push("exec", json!({"code":0,"stdout":"Success: created install session [777]","stderr":""}));
+        b.push("exec", json!({"code":0,"stdout":"Success: streamed 10 bytes","stderr":""}));
+        b.push("exec", json!({"code":0,"stdout":"Success","stderr":""}));
+        let mut plan_data = sample_plan();
+        plan_data.label_hint = Some("示例应用".into());
+        let ctx = OpContext { label: "base.apk".into(), source: "silent".into(), ..Default::default() };
+        execute_with_context(&b, &plan_data, &InstallOptions::default(), &ctx).unwrap();
+        let (_, a) = b.calls().into_iter().find(|(m, _)| m == "logAppend").unwrap();
+        assert_eq!(a["appName"], "示例应用");
+        assert_eq!(a["label"], "示例应用");
+    }
+
+    #[test]
     fn execute_logs_failure_when_not_authorized() {
         let b = MockBridge::new();
         b.push("shizukuState", json!({"available":false,"permission":0}));
         for _ in 0..2 { authorized(&b); }
-        let ctx = OpContext { label: "bg.apk".into(), source: "silent".into() };
+        let ctx = OpContext { label: "bg.apk".into(), source: "silent".into(), ..Default::default() };
         let r = execute_with_context(&b, &sample_plan(), &InstallOptions::default(), &ctx);
         assert!(r.is_err());
         let (_, a) = b.calls().into_iter().find(|(m, _)| m == "logAppend").unwrap();
@@ -375,7 +404,7 @@ mod tests {
             parts: vec![SplitPart { name: "base.apk".into(), size: 1, stdin: StdinSource::Uri { uri: "u".into() } }],
             total_size: 1,
             create_args: vec!["pm".into(), "install-create".into()],
-            package_hint: None, version_hint: None, requires_confirmation: false,
+            package_hint: None, version_hint: None, label_hint: None, requires_confirmation: false,
         };
         let e = execute(&b, &plan_data, &InstallOptions::default()).unwrap_err();
         assert!(matches!(e, CoreError::Write(_)));

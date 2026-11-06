@@ -3,6 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
+use crate::auth;
 use crate::config;
 use crate::error::{CoreError, Result};
 use crate::install;
@@ -82,9 +83,66 @@ impl<B: PlatformBridge> Core<B> {
                 Ok(json!({ "granted": granted, "state": st, "guidance": state::guidance(st) }))
             }
             "setConfig" => {
-                let c: Config = opt(a, "config");
+                // 按字段合并：UI 侧只回传它关心的字段，不能把新增的授权配置重置成默认值。
+                let mut merged = serde_json::to_value(self.cfg())?;
+                if let (Some(dst), Some(src)) = (
+                    merged.as_object_mut(),
+                    a.get("config").and_then(Value::as_object),
+                ) {
+                    for (k, v) in src {
+                        dst.insert(k.clone(), v.clone());
+                    }
+                }
+                let c: Config = serde_json::from_value(merged)?;
                 self.save_cfg(&c)?;
                 Ok(json!({ "config": c }))
+            }
+            // ------------------------------------------------ 调用方授权
+            "callerDecision" => {
+                let caller = a["caller"].as_str().unwrap_or("");
+                let cfg = self.cfg();
+                let d = auth::decide(&cfg, caller);
+                let label = platform::caller_label(&self.bridge, &auth::normalize(caller))
+                    .unwrap_or_default();
+                Ok(json!({
+                    "decision": d.as_str(),
+                    "caller": auth::normalize(caller),
+                    "callerLabel": label,
+                    "authEnabled": cfg.caller_auth_enabled,
+                }))
+            }
+            "callerGrant" => {
+                let mut c = self.cfg();
+                auth::grant(&mut c, a["caller"].as_str().unwrap_or(""),
+                            a["remember"].as_bool().unwrap_or(true))?;
+                self.save_cfg(&c)?;
+                Ok(json!({ "config": c }))
+            }
+            "callerDeny" => {
+                let mut c = self.cfg();
+                auth::deny(&mut c, a["caller"].as_str().unwrap_or(""),
+                           a["remember"].as_bool().unwrap_or(true))?;
+                self.save_cfg(&c)?;
+                Ok(json!({ "config": c }))
+            }
+            "callerSet" => {
+                let mut c = self.cfg();
+                auth::set_caller(&mut c, a["caller"].as_str().unwrap_or(""),
+                                 a["allowed"].as_bool().unwrap_or(false))?;
+                self.save_cfg(&c)?;
+                Ok(json!({ "config": c }))
+            }
+            "callerClear" => {
+                let mut c = self.cfg();
+                auth::clear_all(&mut c);
+                self.save_cfg(&c)?;
+                Ok(json!({ "config": c }))
+            }
+            "installedApps" => platform::installed_apps(&self.bridge),
+            "appLabel" => {
+                let pkg = a["package"].as_str().unwrap_or("");
+                let label = platform::app_label(&self.bridge, pkg).unwrap_or_default();
+                Ok(json!({ "package": pkg, "label": label }))
             }
             "allowListAdd" => {
                 let mut c = self.cfg();

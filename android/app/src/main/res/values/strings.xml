@@ -4,7 +4,7 @@
     <string name="app_tagline">Shizuku 授权 · Rust 核心</string>
     <string name="header_subtitle">静默安装 · 无需确认 · 后台完成</string>
     <string name="settings_title">设置</string>
-    <string name="settings_subtitle">安装行为与包名白名单</string>
+    <string name="settings_subtitle">静默安装授权与安装行为</string>
 
     <string name="section_service">服务状态</string>
     <string name="section_install">安装</string>
@@ -51,7 +51,8 @@
     <string name="log_success">成功</string>
     <string name="log_fail">失败</string>
     <string name="log_unknown">未知记录</string>
-    <string name="log_error_code">错误码 %1$s</string>
+    <string name="log_error_code">原因 %1$s</string>
+    <string name="log_caller">调用方 %1$s</string>
 
     <string name="allow_title">免确认包名白名单</string>
     <string name="allow_hint">输入完整包名</string>
@@ -59,6 +60,47 @@
     <string name="allow_clear">清空白名单</string>
     <string name="allow_empty">（空）</string>
     <string name="allow_remove">移除</string>
+
+    <!-- 静默安装授权 -->
+    <string name="auth_card_title">静默安装授权</string>
+    <string name="auth_card_desc">只有被允许的应用才能直接发起静默安装；首次调用会弹窗询问，不会让任意软件都能直接安装。</string>
+    <string name="opt_caller_auth">外部调用需授权（推荐开启）</string>
+    <string name="opt_floating">安装时显示左上角悬浮指示器</string>
+    <string name="opt_fallback">静默失败后降级为系统安装器</string>
+    <string name="auth_disabled_warn">已关闭授权：任何应用都可发起静默安装</string>
+
+    <string name="auth_app_list_title">允许静默安装的应用</string>
+    <string name="auth_app_list_hint">读取系统已安装应用，勾选后该应用可直接发起静默安装</string>
+    <string name="auth_search_hint">搜索应用名称或包名</string>
+    <string name="auth_revoke_all">全部取消</string>
+    <string name="auth_loading">正在读取应用列表…</string>
+    <string name="auth_no_match">没有匹配的应用</string>
+    <string name="auth_tag_system">系统</string>
+    <string name="auth_tag_user">用户</string>
+    <string name="auth_allowed_count">已授权 %1$d 个应用</string>
+    <string name="auth_toggle_failed">设置失败，请重试</string>
+
+    <string name="advanced_title">高级：免确认包名白名单</string>
+    <string name="advanced_expand">展开</string>
+    <string name="advanced_collapse">收起</string>
+
+    <string name="caller_unknown">未知来源</string>
+    <string name="error_unknown">未知错误</string>
+    <string name="auth_dialog_title">允许静默安装？</string>
+    <string name="auth_dialog_install">%1$s 请求通过本应用静默安装 APK。未授权的来源无法在后台安装应用。</string>
+    <string name="auth_dialog_uninstall">%1$s 请求通过本应用静默卸载应用。</string>
+    <string name="auth_remember">记住本次选择（之后不再询问）</string>
+    <string name="auth_deny">拒绝</string>
+    <string name="auth_allow">允许</string>
+    <string name="auth_denied">已阻止 %1$s 的静默安装请求</string>
+    <string name="notify_auth_denied_title">已阻止静默安装</string>
+    <string name="notify_fallback_title">%1$s 需要系统安装确认</string>
+    <string name="notify_fallback_text">静默安装未成功，已打开系统安装界面，请手动确认</string>
+
+    <string name="overlay_perm_title">需要悬浮窗权限</string>
+    <string name="overlay_perm_msg">用于在安装时显示左上角的圆形进度指示器。不授权不影响静默安装，仅不显示该指示器。</string>
+    <string name="overlay_perm_grant">去授权</string>
+    <string name="overlay_perm_skip">暂不</string>
 
     <string name="dialog_confirm_title">确认安装</string>
     <string name="dialog_confirm_btn">开始安装</string>

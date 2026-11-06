@@ -3,6 +3,7 @@ package io.github.lianxia233.shizukuinst;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
@@ -19,6 +20,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -40,7 +43,9 @@ public final class ShizukuBridge {
     public static final int REQ_CODE = 0x5A11;
 
     private static final String DEFAULT_CONFIG =
-            "{\"confirmBeforeInstall\":false,\"deleteApkAfterInstall\":false,\"allowList\":[]}";
+            "{\"confirmBeforeInstall\":false,\"deleteApkAfterInstall\":false,\"allowList\":[],"
+                    + "\"callerAuthEnabled\":true,\"allowedCallers\":[],\"deniedCallers\":[],"
+                    + "\"fallbackToSystemInstaller\":true,\"floatingIndicator\":true}";
 
     public interface ProgressListener {
         void onProgress(String stage, int index, int total);
@@ -95,6 +100,12 @@ public final class ShizukuBridge {
                             .toString();
                 case "logClear":
                     return InstallLogStore.clear(App.context()).toString();
+                case "installedApps":
+                    return installedApps().toString();
+                case "appLabel":
+                    return appLabel(a).toString();
+                case "callerLabel":
+                    return callerLabel(a).toString();
                 default:
                     return error("unknown method: " + method);
             }
@@ -406,6 +417,58 @@ public final class ShizukuBridge {
             }
         }
         return new JSONObject().put("deleted", deleted);
+    }
+
+    // ------------------------------------------------------------ 应用名称与列表
+
+    /** 系统应用列表：供设置页渲染授权开关。用户应用排在前面，同类按名称排序。 */
+    private static JSONObject installedApps() throws Exception {
+        Context c = App.context();
+        PackageManager pm = c.getPackageManager();
+        List<ApplicationInfo> infos = pm.getInstalledApplications(0);
+        final String self = c.getPackageName();
+        List<JSONObject> rows = new ArrayList<>();
+        for (ApplicationInfo info : infos) {
+            if (info.packageName == null || info.packageName.equals(self)) {
+                continue;
+            }
+            String label;
+            try {
+                CharSequence cs = info.loadLabel(pm);
+                label = cs == null ? "" : cs.toString().trim();
+            } catch (Throwable ignored) {
+                label = "";
+            }
+            if (label.isEmpty()) {
+                label = info.packageName;
+            }
+            JSONObject o = new JSONObject();
+            o.put("package", info.packageName);
+            o.put("label", label);
+            o.put("system", (info.flags & ApplicationInfo.FLAG_SYSTEM) != 0);
+            rows.add(o);
+        }
+        rows.sort((a, b) -> {
+            int sa = a.optBoolean("system") ? 1 : 0;
+            int sb = b.optBoolean("system") ? 1 : 0;
+            if (sa != sb) {
+                return sa - sb;
+            }
+            return a.optString("label").compareToIgnoreCase(b.optString("label"));
+        });
+        return new JSONObject().put("apps", new JSONArray(rows));
+    }
+
+    /** 包名 → 已安装应用的中文名，查不到返回空串。 */
+    private static JSONObject appLabel(JSONObject a) throws Exception {
+        String label = AppNames.labelForPackage(App.context(), a.optString("package", ""));
+        return new JSONObject().put("label", label == null ? "" : label);
+    }
+
+    /** 调用方标识 → 可展示名称（未知来源有专用文案）。 */
+    private static JSONObject callerLabel(JSONObject a) throws Exception {
+        return new JSONObject().put("label",
+                AppNames.labelForCaller(App.context(), a.optString("caller", "")));
     }
 
     // ------------------------------------------------------------ 配置持久化

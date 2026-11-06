@@ -14,9 +14,14 @@
         <item name="android:fontFamily">sans</item>
     </style>
 
-    <!-- 外部安装意图的透明无界面入口：无背景、无动画、不拦截触摸 -->
+    <!--
+      外部安装意图的入口。
+      刻意不使用 windowIsTranslucent：半透明全屏窗口会让系统把状态栏/导航栏
+      染黑并拦截触摸，正是「静默安装时屏幕卡住」的根因。
+      这里改为浮动小窗口，运行时缩到 1x1 且 NOT_TOUCHABLE；
+      仅在需要首次授权时才把窗口放大为居中卡片并临时加 dim。
+    -->
     <style name="Theme.Transparent" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowNoTitle">true</item>
@@ -24,5 +29,8 @@
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:colorBackgroundCacheHint">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
 </resources>

@@ -2,53 +2,73 @@ package io.github.lianxia233.shizukuinst;
 
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.Context;
 import android.content.Intent;
-import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.OpenableColumns;
+import android.view.Gravity;
+import android.view.Window;
 import android.view.WindowManager;
+import android.widget.CheckBox;
+import android.widget.TextView;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
- * 透明无界面入口：接管外部「打开方式 / 分享 / 安装 / 卸载」意图。
- * 不加载布局、不拦截触摸、不获取焦点，全程后台执行，只通过通知气泡反馈。
+ * 外部「打开方式 / 分享 / 安装 / 卸载」意图的入口。
+ *
+ * 这个 Activity 只做两件事：识别调用方、按授权策略决定是否放行。
+ * 真正的安装在进程级后台线程执行（{@link SilentTask}），因此本 Activity
+ * 可以立刻 finish —— 屏幕上不会残留任何全屏透明窗口，状态栏/导航栏不会变黑，
+ * 也不会拦截前台应用的触摸。
+ *
+ * 唯一会显示界面的情况是「首次调用需要授权」：此时把窗口放大为一张居中小卡片，
+ * 用户点完按钮后立即恢复 1x1 窗口并销毁。
  */
 public final class SilentInstallActivity extends Activity {
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private volatile String label = "安装包";
-    private volatile boolean uninstall;
-    private volatile boolean ended;
+    private final List<String> uris = new ArrayList<>();
+    private boolean valid;
+    private boolean uninstall;
+    private boolean ended;
+    private boolean authShowing;
+    private String uninstallPkg = "";
+    private String label = "安装包";
+    private String caller = "@unknown";
+    private String callerLabel = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        shrinkWindow();
+        Notifier.ensureChannels(this);
+        parseIntent(getIntent());
+        if (!valid) {
+            endQuietly();
+            return;
+        }
+        caller = resolveCaller(getIntent());
+        evaluate();
+    }
+
+    /** 默认形态：1x1、完全不可触摸、无 dim 的浮动窗口，对前台零影响。 */
+    private void shrinkWindow() {
+        Window w = getWindow();
+        w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                 | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                 | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
-        Notifier.ensureChannels(this);
-        ShizukuBridge.setProgressListener((stage, index, total) ->
-                Notifier.progress(App.context(), label, uninstall, index, total, stage));
-        handle(getIntent());
+        w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        w.setDimAmount(0f);
+        w.setLayout(1, 1);
+        w.setGravity(Gravity.TOP | Gravity.START);
     }
 
-    @Override
-    protected void onDestroy() {
-        ShizukuBridge.setProgressListener(null);
-        worker.shutdownNow();
-        super.onDestroy();
-    }
+    // ---------------------------------------------------------------- 意图解析
 
-    private void handle(Intent i) {
+    private void parseIntent(Intent i) {
         if (i == null || i.getAction() == null) {
-            endQuietly();
             return;
         }
         String action = i.getAction();
@@ -56,18 +76,21 @@ public final class SilentInstallActivity extends Activity {
                 || "android.intent.action.UNINSTALL_PACKAGE".equals(action)) {
             Uri u = i.getData();
             String pkg = u == null ? "" : u.getSchemeSpecificPart();
+            if (pkg.startsWith("package:")) {
+                pkg = pkg.substring("package:".length());
+            }
+            pkg = pkg.trim();
             if (pkg.isEmpty()) {
-                fail("未指定包名");
                 return;
             }
             uninstall = true;
-            label = pkg;
-            Notifier.start(this, label, true);
-            worker.execute(() -> doUninstall(pkg));
+            uninstallPkg = pkg;
+            String installed = AppNames.labelForPackage(this, pkg);
+            label = installed == null ? pkg : installed;
+            valid = true;
             return;
         }
 
-        List<String> uris = new ArrayList<>();
         Uri single = i.getData();
         if (single == null) {
             single = i.getParcelableExtra(Intent.EXTRA_STREAM);
@@ -100,83 +123,198 @@ public final class SilentInstallActivity extends Activity {
             }
         }
         if (uris.isEmpty()) {
-            fail("未收到安装包");
             return;
         }
-        label = displayName(Uri.parse(uris.get(0)));
-        Notifier.start(this, label, false);
-        worker.execute(() -> doInstall(uris));
+        String name = AppNames.displayName(this, uris.get(0));
+        label = name.isEmpty() ? "安装包" : name;
+        valid = true;
     }
 
-    private void doInstall(List<String> uris) {
+    /** 尽力识别是谁发起的调用；拿不到一律视为匿名来源，必须每次询问。 */
+    private String resolveCaller(Intent i) {
+        String self = getPackageName();
+        List<String> candidates = new ArrayList<>();
+        String calling = getCallingPackage();
+        if (calling != null) {
+            candidates.add(calling);
+        }
         try {
-            JSONObject opts = defaultOptions();
-            JSONObject prepare = new JSONObject()
-                    .put("uris", new JSONArray(uris))
-                    .put("options", opts);
-            JSONObject r = call("prepareInstall", prepare.toString());
-            if (!r.optBoolean("ok")) {
-                fail(errorText(r));
-                return;
+            Uri ref = getReferrer();
+            if (ref != null) {
+                candidates.add(packageFromReferrer(ref));
             }
-            JSONObject d = r.optJSONObject("data");
-            JSONObject plan = d == null ? null : d.optJSONObject("plan");
-            JSONObject summary = d == null ? null : d.optJSONObject("summary");
-            if (plan == null) {
-                fail("未能生成安装计划");
-                return;
+        } catch (Throwable ignored) {
+        }
+        try {
+            Uri extra = i.getParcelableExtra(Intent.EXTRA_REFERRER);
+            if (extra != null) {
+                candidates.add(packageFromReferrer(extra));
             }
-            String pkg = summary == null ? "" : summary.optString("package", "");
-            JSONObject commit = new JSONObject().put("plan", plan).put("options", opts)
-                    .put("context", new JSONObject().put("label", label).put("source", "silent"));
-            JSONObject cr = call("commitInstall", commit.toString());
-            if (!cr.optBoolean("ok")) {
-                complete(false, errorText(cr), "");
-                return;
+        } catch (Throwable ignored) {
+        }
+        String refName = i.getStringExtra(Intent.EXTRA_REFERRER_NAME);
+        if (refName != null && !refName.isEmpty()) {
+            try {
+                candidates.add(packageFromReferrer(Uri.parse(refName)));
+            } catch (Throwable ignored) {
             }
-            JSONObject crd = cr.optJSONObject("data");
-            JSONObject result = crd == null ? null : crd.optJSONObject("result");
-            JSONObject outcome = result == null ? null : result.optJSONObject("outcome");
-            boolean ok = outcome != null && outcome.optBoolean("ok");
-            String raw = outcome == null ? "" : outcome.optString("raw", "");
-            String code = outcome == null ? "" : outcome.optString("code", "");
-            String detail = raw.trim().isEmpty() ? code : raw.trim();
-            complete(ok, detail, ok ? pkg : "");
+        }
+        for (String c : candidates) {
+            if (c != null && !c.isEmpty() && !c.equals(self) && plausiblePackage(c)) {
+                return c;
+            }
+        }
+        return "@unknown";
+    }
+
+    private String packageFromReferrer(Uri u) {
+        if (u == null) {
+            return null;
+        }
+        String scheme = u.getScheme();
+        if ("android-app".equals(scheme) || "app".equals(scheme)) {
+            return u.getHost();
+        }
+        return null;
+    }
+
+    private boolean plausiblePackage(String s) {
+        if (s.length() < 3 || s.length() > 128) {
+            return false;
+        }
+        int dots = 0;
+        for (int k = 0; k < s.length(); k++) {
+            char ch = s.charAt(k);
+            if (ch == '.') {
+                dots++;
+            } else if (!Character.isLetterOrDigit(ch) && ch != '_') {
+                return false;
+            }
+        }
+        return dots >= 1;
+    }
+
+    // ---------------------------------------------------------------- 授权决策
+
+    private void evaluate() {
+        JSONObject r;
+        try {
+            r = call("callerDecision",
+                    new JSONObject().put("caller", caller).toString());
         } catch (Throwable t) {
-            fail(String.valueOf(t));
+            r = new JSONObject();
+        }
+        JSONObject d = r.optJSONObject("data");
+        if (d != null) {
+            caller = d.optString("caller", caller);
+            callerLabel = d.optString("callerLabel", "");
+        }
+        if (callerLabel == null || callerLabel.trim().isEmpty()) {
+            callerLabel = AppNames.labelForCaller(this, caller);
+        }
+        String decision = d == null ? "ASK" : d.optString("decision", "ASK");
+        if ("DENY".equals(decision)) {
+            denyQuietly();
+        } else if ("ASK".equals(decision)) {
+            showAuthDialog();
+        } else {
+            launchTask();
+            endQuietly();
         }
     }
 
-    private void doUninstall(String pkg) {
-        try {
-            JSONObject a = new JSONObject()
-                    .put("package", pkg)
-                    .put("options", new JSONObject().put("keepData", false))
-                    .put("context", new JSONObject().put("label", pkg).put("source", "silent"));
-            JSONObject r = call("uninstall", a.toString());
-            if (!r.optBoolean("ok")) {
-                complete(false, errorText(r), "");
+    private void showAuthDialog() {
+        authShowing = true;
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) {
                 return;
             }
-            JSONObject d = r.optJSONObject("data");
-            JSONObject result = d == null ? null : d.optJSONObject("result");
-            JSONObject outcome = result == null ? null : result.optJSONObject("outcome");
-            boolean ok = outcome != null && outcome.optBoolean("ok");
-            String raw = outcome == null ? "" : outcome.optString("raw", "");
-            String code = outcome == null ? "" : outcome.optString("code", "");
-            complete(ok, raw.trim().isEmpty() ? code : raw.trim(), "");
-        } catch (Throwable t) {
-            fail(String.valueOf(t));
-        }
+            Window w = getWindow();
+            w.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
+            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            w.setLayout(WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT);
+            w.setGravity(Gravity.CENTER);
+            setContentView(R.layout.dialog_auth);
+
+            String who = callerLabel.trim().isEmpty()
+                    ? getString(R.string.caller_unknown) : callerLabel.trim();
+            ((TextView) findViewById(R.id.authMessage)).setText(getString(
+                    uninstall ? R.string.auth_dialog_uninstall : R.string.auth_dialog_install, who));
+            ((TextView) findViewById(R.id.authCaller)).setText(
+                    "@unknown".equals(caller) ? getString(R.string.caller_unknown) : caller);
+
+            CheckBox remember = findViewById(R.id.authRemember);
+            // 匿名来源不能被永久记住：否则一次允许会放行后续所有匿名调用
+            if ("@unknown".equals(caller)) {
+                remember.setEnabled(false);
+                remember.setChecked(false);
+            }
+            findViewById(R.id.btnAllow).setOnClickListener(
+                    v -> onDecision(true, remember.isChecked()));
+            findViewById(R.id.btnDeny).setOnClickListener(
+                    v -> onDecision(false, remember.isChecked()));
+        });
     }
 
-    private JSONObject defaultOptions() throws Exception {
-        return new JSONObject()
-                .put("replace", true)
-                .put("grantRuntimePermissions", true)
-                .put("allowDowngrade", false)
-                .put("deleteSourceAfter", false)
-                .put("skipConfirm", true);
+    private void onDecision(boolean allow, boolean remember) {
+        if (ended) {
+            return;
+        }
+        final boolean rememberFinal = remember && !"@unknown".equals(caller);
+        final String callerFinal = caller;
+        App.executor().execute(() -> {
+            try {
+                JSONObject a = new JSONObject()
+                        .put("caller", callerFinal)
+                        .put("remember", rememberFinal);
+                call(allow ? "callerGrant" : "callerDeny", a.toString());
+            } catch (Throwable ignored) {
+            }
+        });
+        if (!allow) {
+            recordDenied();
+            Notifier.denied(App.context(), label, callerLabel);
+            endQuietly();
+            return;
+        }
+        // 恢复最小窗口并立刻销毁：安装全程不再有任何 Activity 窗口
+        shrinkWindow();
+        launchTask();
+        endQuietly();
+    }
+
+    private void denyQuietly() {
+        recordDenied();
+        Notifier.denied(App.context(), label, callerLabel);
+        endQuietly();
+    }
+
+    private void recordDenied() {
+        App.executor().execute(() -> {
+            try {
+                JSONObject e = new JSONObject()
+                        .put("op", uninstall ? "uninstall" : "install")
+                        .put("label", label)
+                        .put("appName", label)
+                        .put("source", "silent")
+                        .put("caller", caller)
+                        .put("ok", false)
+                        .put("code", "CALLER_DENIED")
+                        .put("detail", "调用方未获静默安装授权");
+                call("logRecord", e.toString());
+            } catch (Throwable ignored) {
+            }
+        });
+    }
+
+    private void launchTask() {
+        Context app = getApplicationContext();
+        App.executor().execute(uninstall
+                ? SilentTask.uninstall(app, uninstallPkg, caller)
+                : SilentTask.install(app, uris, caller, label));
     }
 
     private JSONObject call(String method, String args) {
@@ -192,47 +330,13 @@ public final class SilentInstallActivity extends Activity {
         }
     }
 
-    private String errorText(JSONObject r) {
-        JSONObject e = r.optJSONObject("error");
-        return e == null ? "未知错误" : e.optString("message", "未知错误");
-    }
-
-    private String displayName(Uri u) {
-        try (Cursor c = getContentResolver().query(u, null, null, null, null)) {
-            if (c != null && c.moveToFirst()) {
-                int n = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                if (n >= 0 && !c.isNull(n)) {
-                    String s = c.getString(n);
-                    if (s != null && !s.isEmpty()) {
-                        return s;
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
+    @Override
+    public void onBackPressed() {
+        if (authShowing) {
+            onDecision(false, false);
+        } else {
+            endQuietly();
         }
-        String seg = u.getLastPathSegment();
-        return seg == null || seg.isEmpty() ? "安装包" : seg;
-    }
-
-    private void fail(String msg) {
-        // 准备阶段失败未进入核心执行，补记一条，保证后台链路任何结果都留有记录。
-        try {
-            JSONObject record = new JSONObject()
-                    .put("op", uninstall ? "uninstall" : "install")
-                    .put("label", label)
-                    .put("source", "silent")
-                    .put("ok", false)
-                    .put("code", "PREPARE_FAILED")
-                    .put("detail", msg);
-            call("logRecord", record.toString());
-        } catch (Throwable ignored) {
-        }
-        complete(false, msg, "");
-    }
-
-    private void complete(boolean ok, String detail, String launchPackage) {
-        Notifier.finish(App.context(), label, uninstall, ok, detail, launchPackage);
-        endQuietly();
     }
 
     private void endQuietly() {
@@ -240,7 +344,6 @@ public final class SilentInstallActivity extends Activity {
             return;
         }
         ended = true;
-        ShizukuBridge.setProgressListener(null);
         runOnUiThread(() -> {
             if (!isFinishing()) {
                 finish();
