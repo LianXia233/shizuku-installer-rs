@@ -1,0 +1,46 @@
+name: build-apk
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain + Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK / NDK
+        uses: android-actions/setup-android@v3
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Python dependencies
+        run: python3 -m pip install --quiet pillow
+
+      - name: Build
+        run: bash scripts/build.sh
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShizukuInstaller
+          path: ShizukuInstaller.apk

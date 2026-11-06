@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>Shizuku Installer - original icon</title>
+  
+  <g fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round">
+    <path d="M38,24 Q54,8 70,24"/>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="38" cy="24" r="3.2"/><circle cx="54" cy="15" r="3.2"/><circle cx="70" cy="24" r="3.2"/>
+  </g>
+  <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M54,32 L54,60"/>
+    <path d="M40,52 L54,66 L68,52"/>
+  </g>
+  <path d="M28,68 L28,76 Q28,82 34,82 L74,82 Q80,82 80,76 L80,68"
+        fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

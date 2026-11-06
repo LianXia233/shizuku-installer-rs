@@ -1,0 +1,15 @@
+# 构建产物与本机配置
+/target/
+**/target/
+/build/
+android/build/
+android/app/build/
+android/.gradle/
+.gradle/
+local.properties
+*.apk
+*.aab
+*.so
+*.keystore
+*.jks
+.DS_Store

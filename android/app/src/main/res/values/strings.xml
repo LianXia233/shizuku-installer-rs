@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">静默安装器</string>
+    <string name="settings_title">设置</string>
+
+    <string name="status_title">Shizuku 状态</string>
+    <string name="status_checking">正在检查…</string>
+    <string name="btn_check">刷新状态</string>
+    <string name="btn_request">请求授权</string>
+
+    <string name="btn_install">选择安装包并安装</string>
+    <string name="btn_uninstall">卸载应用</string>
+    <string name="btn_settings">白名单与设置</string>
+    <string name="btn_launch">启动应用</string>
+    <string name="btn_copy_log">复制日志</string>
+
+    <string name="opt_confirm">安装前确认（默认关闭，静默执行）</string>
+    <string name="opt_delete_after">成功后删除安装包</string>
+    <string name="opt_downgrade">允许降级安装</string>
+
+    <string name="log_title">执行日志</string>
+    <string name="log_empty">尚无操作记录。</string>
+    <string name="dialog_confirm_title">确认安装</string>
+    <string name="dialog_confirm_btn">开始安装</string>
+    <string name="dialog_cancel">取消</string>
+    <string name="dialog_uninstall_title">卸载应用</string>
+    <string name="dialog_uninstall_hint">输入包名</string>
+    <string name="dialog_uninstall_btn">卸载</string>
+    <string name="dialog_keep_data">保留数据与缓存</string>
+
+    <string name="copied">已复制到剪贴板</string>
+    <string name="no_launcher_package">请先完成一次安装</string>
+    <string name="notify_channel">安装结果</string>
+    <string name="notify_channel_desc">安装与卸载的结果通知</string>
+
+    <string name="notify_channel_progress">安装进度</string>
+    <string name="notify_channel_progress_desc">静默安装过程中的实时进度提示</string>
+    <string name="notify_installing">%1$s 正在安装中</string>
+    <string name="notify_uninstalling">%1$s 正在卸载中</string>
+    <string name="notify_stage_prepare">正在准备安装包…</string>
+    <string name="notify_stage_create">正在创建安装会话</string>
+    <string name="notify_stage_write">正在写入安装包</string>
+    <string name="notify_stage_commit">正在提交安装</string>
+    <string name="notify_stage_done">即将完成</string>
+    <string name="notify_install_ok">%1$s 安装完成</string>
+    <string name="notify_install_fail">%1$s 安装失败</string>
+    <string name="notify_uninstall_ok">%1$s 卸载完成</string>
+    <string name="notify_uninstall_fail">%1$s 卸载失败</string>
+    <string name="notify_action_launch">启动</string>
+</resources>

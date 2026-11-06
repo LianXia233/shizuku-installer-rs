@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:fitsSystemWindows="true"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/app_name"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="?android:attr/textColorPrimary"
+        android:layout_marginBottom="12dp" />
+
+    <!-- Shizuku 状态卡片 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_card"
+        android:padding="16dp"
+        android:layout_marginBottom="12dp">
+
+        <TextView
+            android:id="@+id/tvStatusTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/status_title"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="?android:attr/textColorPrimary" />
+
+        <TextView
+            android:id="@+id/tvStatusHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/status_checking"
+            android:textSize="13sp"
+            android:textColor="?android:attr/textColorSecondary"
+            android:layout_marginTop="6dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="10dp">
+
+            <Button
+                android:id="@+id/btnCheck"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_check"
+                style="?android:attr/borderlessButtonStyle" />
+
+            <Button
+                android:id="@+id/btnPermission"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_request"
+                android:backgroundTint="@color/brand_primary"
+                android:textColor="#FFFFFF" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <Button
+        android:id="@+id/btnInstall"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_install"
+        android:backgroundTint="@color/brand_primary"
+        android:textColor="#FFFFFF" />
+
+    <Button
+        android:id="@+id/btnUninstall"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/btn_uninstall"
+        android:layout_marginTop="8dp" />
+
+    <Switch
+        android:id="@+id/swConfirm"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/opt_confirm"
+        android:checked="true"
+        android:layout_marginTop="10dp" />
+
+    <Switch
+        android:id="@+id/swDeleteAfter"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/opt_delete_after" />
+
+    <Switch
+        android:id="@+id/swDowngrade"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/opt_downgrade" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <Button
+            android:id="@+id/btnSettings"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_settings"
+            style="?android:attr/borderlessButtonStyle" />
+
+        <Button
+            android:id="@+id/btnLaunch"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_launch"
+            style="?android:attr/borderlessButtonStyle" />
+
+        <Button
+            android:id="@+id/btnCopy"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_copy_log"
+            style="?android:attr/borderlessButtonStyle" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/log_title"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="?android:attr/textColorSecondary"
+        android:layout_marginTop="12dp" />
+
+    <ScrollView
+        android:id="@+id/logScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@drawable/bg_card"
+        android:padding="10dp"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/tvLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/log_empty"
+            android:textSize="12sp"
+            android:typeface="monospace"
+            android:textIsSelectable="true"
+            android:textColor="?android:attr/textColorPrimary" />
+    </ScrollView>
+</LinearLayout>

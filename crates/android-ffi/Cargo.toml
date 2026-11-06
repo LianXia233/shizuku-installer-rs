@@ -1,0 +1,17 @@
+[package]
+name = "shizuku-android-ffi"
+description = "JNI bridge: exposes shizuku-core to the thin Android Java glue layer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "shizuku_core"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+shizuku-core = { path = "../core" }
+serde_json = { workspace = true }
+jni = { workspace = true }

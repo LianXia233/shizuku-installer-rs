@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="window_bg">#F5F8F7</color>
+    <color name="window_bg_dark">#0D1715</color>
+    <color name="card_bg">#FFFFFF</color>
+    <color name="card_bg_dark">#162724</color>
+    <color name="text_primary">#14201E</color>
+    <color name="text_primary_dark">#E8F4F0</color>
+    <color name="text_secondary">#5A6B67</color>
+    <color name="text_secondary_dark">#9FB5AF</color>
+    <color name="divider">#DDE7E4</color>
+    <color name="divider_dark">#2A3C38</color>
+</resources>
