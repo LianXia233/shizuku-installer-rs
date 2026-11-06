@@ -140,17 +140,13 @@ public final class SettingsActivity extends Activity {
                 return;
             }
             if (checked && !FloatingIndicator.canDraw(this)) {
+                // 不再把开关强制关掉：未授权时会降级为 44dp 小窗，指示器仍然可见
                 new AlertDialog.Builder(this)
                         .setTitle(R.string.overlay_perm_title)
                         .setMessage(R.string.overlay_perm_msg)
                         .setPositiveButton(R.string.overlay_perm_grant,
                                 (d, w) -> FloatingIndicator.openPermissionSettings(this))
-                        .setNegativeButton(R.string.overlay_perm_skip, (d, w) -> {
-                            suppress = true;
-                            b.setChecked(false);
-                            suppress = false;
-                            saveConfig();
-                        })
+                        .setNegativeButton(R.string.overlay_perm_skip, null)
                         .show();
             }
             saveConfig();

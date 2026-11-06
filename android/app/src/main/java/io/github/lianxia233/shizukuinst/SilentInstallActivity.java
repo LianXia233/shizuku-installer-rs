@@ -2,15 +2,13 @@ package io.github.lianxia233.shizukuinst;
 
 import android.app.Activity;
 import android.content.ClipData;
-import android.content.Context;
 import android.content.Intent;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.CheckBox;
-import android.widget.TextView;
 
 import org.json.JSONObject;
 
@@ -20,20 +18,29 @@ import java.util.List;
 /**
  * 外部「打开方式 / 分享 / 安装 / 卸载」意图的入口。
  *
- * 这个 Activity 只做两件事：识别调用方、按授权策略决定是否放行。
- * 真正的安装在进程级后台线程执行（{@link SilentTask}），因此本 Activity
- * 可以立刻 finish —— 屏幕上不会残留任何全屏透明窗口，状态栏/导航栏不会变黑，
- * 也不会拦截前台应用的触摸。
+ * 使用 {@code Theme.SilentEntry}（无背景、无 translucent、无 floating、禁预览）：
+ * 系统不会为它创建任何可见窗口，因此安装期间屏幕上不存在全屏透明遮罩，
+ * 状态栏/导航栏不会变黑，也不会拦截前台应用的触摸。
+ * 这与之前「1x1 浮动窗口 + windowIsFloating」的方案不同 —— 后者在部分 ROM 上
+ * 仍会绘制全屏 scrim 并吞掉点击。
  *
- * 唯一会显示界面的情况是「首次调用需要授权」：此时把窗口放大为一张居中小卡片，
- * 用户点完按钮后立即恢复 1x1 窗口并销毁。
+ * 本 Activity 只负责三件事，随后立刻 finish：
+ *   1. 在仍持有外部 URI 读权限时把安装包复制到应用私有缓存（{@link StagedFiles}）；
+ *   2. 识别调用方并查询授权决策；
+ *   3. 放行则把安装交给进程级后台任务，需询问则转发给 {@link CallerAuthActivity}。
  */
 public final class SilentInstallActivity extends Activity {
+    static final String EXTRA_URIS = "staged_uris";
+    static final String EXTRA_CALLER = "caller";
+    static final String EXTRA_CALLER_LABEL = "caller_label";
+    static final String EXTRA_LABEL = "label";
+    static final String EXTRA_UNINSTALL = "uninstall";
+    static final String EXTRA_UNINSTALL_PKG = "uninstall_pkg";
+
     private final List<String> uris = new ArrayList<>();
     private boolean valid;
     private boolean uninstall;
     private boolean ended;
-    private boolean authShowing;
     private String uninstallPkg = "";
     private String label = "安装包";
     private String caller = "@unknown";
@@ -42,27 +49,46 @@ public final class SilentInstallActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // 无窗口主题：绝不 setContentView。再把窗口压到 1x1 并完全点击穿透，
+        // 即便某些 ROM 仍为 NoDisplay Activity 创建一个 DecorView，也不会出现
+        // 全屏透明遮罩、系统栏变黑或吞掉前台触摸。
         shrinkWindow();
         Notifier.ensureChannels(this);
         parseIntent(getIntent());
         if (!valid) {
-            endQuietly();
+            finishQuietly();
             return;
         }
+
+        // 关键：外部 content:// 的读权限只在本 Activity 存活期间有效。
+        // 先复制到自家私有缓存，后台任务全程只读 StagedProvider，不会因
+        // finish 后授权被回收而在 install-write 阶段抛 SecurityException。
+        if (!uninstall) {
+            List<String> staged = StagedFiles.stage(this, uris);
+            uris.clear();
+            uris.addAll(staged);
+        }
+
         caller = resolveCaller(getIntent());
         evaluate();
     }
 
-    /** 默认形态：1x1、完全不可触摸、无 dim 的浮动窗口，对前台零影响。 */
+    /** 1x1、透明、点击完全穿透的窗口；不改变系统栏配色，不 dim。 */
     private void shrinkWindow() {
         Window w = getWindow();
-        w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        w.setBackgroundDrawable(new ColorDrawable(0));
+        WindowManager.LayoutParams lp = w.getAttributes();
+        lp.width = 1;
+        lp.height = 1;
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.x = 0;
+        lp.y = 0;
+        lp.dimAmount = 0f;
+        lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                 | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
-        w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-        w.setDimAmount(0f);
-        w.setLayout(1, 1);
-        w.setGravity(Gravity.TOP | Gravity.START);
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        lp.flags &= ~WindowManager.LayoutParams.FLAG_DIM_BEHIND;
+        w.setAttributes(lp);
     }
 
     // ---------------------------------------------------------------- 意图解析
@@ -91,35 +117,19 @@ public final class SilentInstallActivity extends Activity {
             return;
         }
 
-        Uri single = i.getData();
-        if (single == null) {
-            single = i.getParcelableExtra(Intent.EXTRA_STREAM);
-        }
-        if (single != null) {
-            uris.add(single.toString());
-        }
+        addUri(i.getData());
+        Uri stream = i.getParcelableExtra(Intent.EXTRA_STREAM);
+        addUri(stream);
         ArrayList<Uri> extras = i.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
         if (extras != null) {
             for (Uri u : extras) {
-                if (u != null && !uris.contains(u.toString())) {
-                    uris.add(u.toString());
-                }
+                addUri(u);
             }
         }
         ClipData clip = i.getClipData();
         if (clip != null) {
             for (int k = 0; k < clip.getItemCount(); k++) {
-                Uri u = clip.getItemAt(k).getUri();
-                if (u != null && !uris.contains(u.toString())) {
-                    uris.add(u.toString());
-                }
-            }
-        }
-        for (String s : uris) {
-            try {
-                getContentResolver().takePersistableUriPermission(
-                        Uri.parse(s), Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (Throwable ignored) {
+                addUri(clip.getItemAt(k).getUri());
             }
         }
         if (uris.isEmpty()) {
@@ -128,6 +138,12 @@ public final class SilentInstallActivity extends Activity {
         String name = AppNames.displayName(this, uris.get(0));
         label = name.isEmpty() ? "安装包" : name;
         valid = true;
+    }
+
+    private void addUri(Uri u) {
+        if (u != null && !uris.contains(u.toString())) {
+            uris.add(u.toString());
+        }
     }
 
     /** 尽力识别是谁发起的调用；拿不到一律视为匿名来源，必须每次询问。 */
@@ -214,107 +230,26 @@ public final class SilentInstallActivity extends Activity {
         }
         String decision = d == null ? "ASK" : d.optString("decision", "ASK");
         if ("DENY".equals(decision)) {
-            denyQuietly();
+            DenyLog.record(App.context(), uninstall, label, caller, callerLabel);
+            finishQuietly();
         } else if ("ASK".equals(decision)) {
-            showAuthDialog();
+            Intent auth = new Intent(this, CallerAuthActivity.class);
+            auth.putStringArrayListExtra(EXTRA_URIS, new ArrayList<>(uris));
+            auth.putExtra(EXTRA_CALLER, caller);
+            auth.putExtra(EXTRA_CALLER_LABEL, callerLabel);
+            auth.putExtra(EXTRA_LABEL, label);
+            auth.putExtra(EXTRA_UNINSTALL, uninstall);
+            auth.putExtra(EXTRA_UNINSTALL_PKG, uninstallPkg);
+            auth.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            try {
+                startActivity(auth);
+            } catch (Throwable ignored) {
+            }
+            finishQuietly();
         } else {
-            launchTask();
-            endQuietly();
+            TaskLauncher.launch(this, uninstall, uris, uninstallPkg, caller, label);
+            finishQuietly();
         }
-    }
-
-    private void showAuthDialog() {
-        authShowing = true;
-        runOnUiThread(() -> {
-            if (isFinishing() || isDestroyed()) {
-                return;
-            }
-            Window w = getWindow();
-            w.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
-            w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            w.setLayout(WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT);
-            w.setGravity(Gravity.CENTER);
-            setContentView(R.layout.dialog_auth);
-
-            String who = callerLabel.trim().isEmpty()
-                    ? getString(R.string.caller_unknown) : callerLabel.trim();
-            ((TextView) findViewById(R.id.authMessage)).setText(getString(
-                    uninstall ? R.string.auth_dialog_uninstall : R.string.auth_dialog_install, who));
-            ((TextView) findViewById(R.id.authCaller)).setText(
-                    "@unknown".equals(caller) ? getString(R.string.caller_unknown) : caller);
-
-            CheckBox remember = findViewById(R.id.authRemember);
-            // 匿名来源不能被永久记住：否则一次允许会放行后续所有匿名调用
-            if ("@unknown".equals(caller)) {
-                remember.setEnabled(false);
-                remember.setChecked(false);
-            }
-            findViewById(R.id.btnAllow).setOnClickListener(
-                    v -> onDecision(true, remember.isChecked()));
-            findViewById(R.id.btnDeny).setOnClickListener(
-                    v -> onDecision(false, remember.isChecked()));
-        });
-    }
-
-    private void onDecision(boolean allow, boolean remember) {
-        if (ended) {
-            return;
-        }
-        final boolean rememberFinal = remember && !"@unknown".equals(caller);
-        final String callerFinal = caller;
-        App.executor().execute(() -> {
-            try {
-                JSONObject a = new JSONObject()
-                        .put("caller", callerFinal)
-                        .put("remember", rememberFinal);
-                call(allow ? "callerGrant" : "callerDeny", a.toString());
-            } catch (Throwable ignored) {
-            }
-        });
-        if (!allow) {
-            recordDenied();
-            Notifier.denied(App.context(), label, callerLabel);
-            endQuietly();
-            return;
-        }
-        // 恢复最小窗口并立刻销毁：安装全程不再有任何 Activity 窗口
-        shrinkWindow();
-        launchTask();
-        endQuietly();
-    }
-
-    private void denyQuietly() {
-        recordDenied();
-        Notifier.denied(App.context(), label, callerLabel);
-        endQuietly();
-    }
-
-    private void recordDenied() {
-        App.executor().execute(() -> {
-            try {
-                JSONObject e = new JSONObject()
-                        .put("op", uninstall ? "uninstall" : "install")
-                        .put("label", label)
-                        .put("appName", label)
-                        .put("source", "silent")
-                        .put("caller", caller)
-                        .put("ok", false)
-                        .put("code", "CALLER_DENIED")
-                        .put("detail", "调用方未获静默安装授权");
-                call("logRecord", e.toString());
-            } catch (Throwable ignored) {
-            }
-        });
-    }
-
-    private void launchTask() {
-        Context app = getApplicationContext();
-        App.executor().execute(uninstall
-                ? SilentTask.uninstall(app, uninstallPkg, caller)
-                : SilentTask.install(app, uris, caller, label));
     }
 
     private JSONObject call(String method, String args) {
@@ -330,25 +265,12 @@ public final class SilentInstallActivity extends Activity {
         }
     }
 
-    @Override
-    public void onBackPressed() {
-        if (authShowing) {
-            onDecision(false, false);
-        } else {
-            endQuietly();
-        }
-    }
-
-    private void endQuietly() {
+    private void finishQuietly() {
         if (ended) {
             return;
         }
         ended = true;
-        runOnUiThread(() -> {
-            if (!isFinishing()) {
-                finish();
-                overridePendingTransition(0, 0);
-            }
-        });
+        finish();
+        overridePendingTransition(0, 0);
     }
 }

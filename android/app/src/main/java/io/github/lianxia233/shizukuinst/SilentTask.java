@@ -53,7 +53,9 @@ final class SilentTask implements Runnable {
     public void run() {
         synchronized (SERIAL) {
             readConfig();
-            FloatingIndicator.acquire(app, floating);
+            // 入口 Activity 已在前台调用 showForeground；这里只做后台兜底
+            // （无悬浮窗权限时后台无法启动 Activity，仅尝试 overlay）。
+            FloatingIndicator.showBackground(app, floating);
             try {
                 if (uninstall) {
                     runUninstall();
@@ -62,7 +64,7 @@ final class SilentTask implements Runnable {
                 }
             } finally {
                 ShizukuBridge.setProgressListener(null);
-                FloatingIndicator.release();
+                FloatingIndicator.dismiss();
             }
         }
     }
@@ -203,20 +205,23 @@ final class SilentTask implements Runnable {
         }
     }
 
-    /** 降级：显式指定系统安装器组件，避免再次匹配到本应用的 INSTALL_PACKAGE 过滤器。 */
+    /**
+     * 降级：显式指定系统安装器组件，避免再次匹配到本应用的 INSTALL_PACKAGE 过滤器。
+     * uriString 是自家 StagedProvider 的 content:// URI，通过临时 grant 安全交给
+     * 系统安装器，既不依赖已失效的调用方授权，也不会暴露 file:// 触发异常。
+     */
     private Intent buildSystemInstallIntent(String uriString) {
         try {
             Uri u = Uri.parse(uriString);
             PackageManager pm = app.getPackageManager();
             String self = app.getPackageName();
             Intent base = new Intent(Intent.ACTION_INSTALL_PACKAGE);
-            base.setData(u);
+            base.setDataAndType(u, "application/vnd.android.package-archive");
             base.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                     | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             ComponentName target = resolveExternal(pm, base, self);
             if (target == null) {
                 base.setAction(Intent.ACTION_VIEW);
-                base.setDataAndType(u, "application/vnd.android.package-archive");
                 target = resolveExternal(pm, base, self);
             }
             Intent out;

@@ -6,7 +6,7 @@
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
     <!-- Android 13+ 通知权限 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- 安装期间的左上角小指示器；未授权时自动降级为纯通知，不影响安装 -->
+    <!-- 可选：授予后指示器用不打断前台的系统悬浮窗；未授予也能显示小圆 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 设置页需要完整枚举系统应用列表（非 Google Play 分发，仅本机授权用途） -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -60,11 +60,14 @@
             android:exported="false"
             android:label="@string/logs_title" />
 
-        <!-- 外部安装/卸载意图由透明无界面入口接管，不拉起主界面 -->
+        <!--
+          外部安装/卸载意图的无窗口入口：Theme.SilentEntry 不创建任何可见窗口，
+          在 onCreate 内完成 URI 复制与授权判断后立即 finish，不拉起主界面。
+        -->
         <activity
             android:name=".SilentInstallActivity"
             android:exported="true"
-            android:theme="@style/Theme.Transparent"
+            android:theme="@style/Theme.SilentEntry"
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:launchMode="singleTop"
@@ -90,6 +93,32 @@
                 <data android:scheme="package" />
             </intent-filter>
         </activity>
+
+        <!-- 首次调用的授权弹窗：整条链路唯一需要用户交互的界面 -->
+        <activity
+            android:name=".CallerAuthActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AuthDialog"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="" />
+
+        <!-- 无悬浮窗权限时的 44dp 左上角小圆窗口，点击穿透、不需要任何权限 -->
+        <activity
+            android:name=".IndicatorActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Indicator"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:taskAffinity="" />
+
+        <!-- 自家只读安装包容器：切断外部 content:// 临时授权的生命周期依赖 -->
+        <provider
+            android:name=".StagedProvider"
+            android:authorities="${applicationId}.staged"
+            android:exported="false"
+            android:grantUriPermissions="true"
+            android:multiprocess="false" />
 
         <!-- 现代 Shizuku API 13.x 的 binder 注入点 -->
         <provider

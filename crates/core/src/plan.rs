@@ -49,6 +49,26 @@ pub fn install_write_args(session: i64, split_name: &str, size: u64) -> Vec<Stri
     a
 }
 
+/// stdin 流式写入失败时的兜底：`pm install-write -S <size> <session> <name> <path>`。
+/// AOSP `runInstallWrite` 的第 4 个参数是文件路径（`-` 才是 stdin），
+/// shell 身份可直接读取该路径，完全绕开跨进程 stdin 管道。
+pub fn install_write_path_args(
+    session: i64,
+    split_name: &str,
+    size: u64,
+    path: &str,
+) -> Vec<String> {
+    let mut a = vec![s("pm"), s("install-write")];
+    if size > 0 {
+        a.push(s("-S"));
+        a.push(size.to_string());
+    }
+    a.push(session.to_string());
+    a.push(split_name.to_string());
+    a.push(path.to_string());
+    a
+}
+
 pub fn install_commit_args(session: i64) -> Vec<String> {
     vec![s("pm"), s("install-commit"), session.to_string()]
 }
@@ -126,6 +146,14 @@ mod tests {
         assert_eq!(
             install_write_args(42, "base.apk", 99),
             vec!["pm", "install-write", "-S", "99", "42", "base.apk", "-"]
+        );
+    }
+
+    #[test]
+    fn write_path_args_use_file_path() {
+        assert_eq!(
+            install_write_path_args(42, "base.apk", 99, "/sdcard/stage/x.apk"),
+            vec!["pm", "install-write", "-S", "99", "42", "base.apk", "/sdcard/stage/x.apk"]
         );
     }
 

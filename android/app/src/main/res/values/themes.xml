@@ -15,22 +15,52 @@
     </style>
 
     <!--
-      外部安装意图的入口。
-      刻意不使用 windowIsTranslucent：半透明全屏窗口会让系统把状态栏/导航栏
-      染黑并拦截触摸，正是「静默安装时屏幕卡住」的根因。
-      这里改为浮动小窗口，运行时缩到 1x1 且 NOT_TOUCHABLE；
-      仅在需要首次授权时才把窗口放大为居中卡片并临时加 dim。
+      外部安装意图的无窗口入口。
+      关键：既不用 windowIsTranslucent，也不用 windowIsFloating —— 这两者都会让
+      部分 ROM 给全屏窗口绘制 scrim、把状态栏/导航栏染黑并短暂吞掉触摸，
+      正是「静默安装时屏幕卡住」的根因。
+      Activity 不 setContentView 且在 onCreate 内立即 finish，屏幕上不存在窗口。
     -->
-    <style name="Theme.Transparent" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.SilentEntry" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@null</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:colorBackgroundCacheHint">@null</item>
+        <item name="android:windowActionBar">false</item>
+    </style>
+
+    <!-- 首次调用的授权卡片：整条链路唯一需要用户交互的界面，居中对话框 + dim 是合理的 -->
+    <style name="Theme.AuthDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+    </style>
+
+    <!--
+      无悬浮窗权限时的 44dp 小圆窗口。刻意保持普通（非 floating、非 translucent）
+      窗口，运行时由代码把尺寸改成 44dp 并置于左上角，避免全屏 scrim。
+    -->
+    <style name="Theme.Indicator" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowIsFloating">false</item>
         <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:colorBackgroundCacheHint">@null</item>
         <item name="android:windowDisablePreview">true</item>
+        <item name="android:colorBackgroundCacheHint">@null</item>
         <item name="android:windowActionBar">false</item>
-        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

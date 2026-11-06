@@ -52,9 +52,17 @@ impl PlatformBridge for JniBridge<'_, '_> {
         let obj = ret.l().map_err(jni_err)?;
         let js = JString::from(obj);
         let text: String = env.get_string(&js).map_err(jni_err)?.into();
-        serde_json::from_str(&text).map_err(|e| {
+        let v: Value = serde_json::from_str(&text).map_err(|e| {
             CoreError::Bridge(format!("桥接返回非法 JSON: {e}; raw={text}"))
-        })
+        })?;
+        // Java 胶水层把异常编码成 {"error": "..."}。若不在此拦截，上层会把
+        // 缺失的 code 当成 -1、把缺失的 stdout/stderr 当成空串，真实故障
+        // （URI 读权限失效、broken pipe、Shizuku binder 断开等）会被伪装成
+        // "写入 xxx 失败 (exit -1)" 而无从诊断。
+        if let Some(msg) = v.get("error").and_then(Value::as_str) {
+            return Err(CoreError::Bridge(format!("平台调用 {method} 失败: {msg}")));
+        }
+        Ok(v)
     }
 }
 

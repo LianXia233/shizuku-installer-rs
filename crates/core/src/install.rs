@@ -164,7 +164,16 @@ pub fn execute_with_context(
     }
     // 日志是旁路：持久化失败不影响安装结果。
     logbook::append(b, &entry);
+    // 清理兜底写入产生的临时文件；入口 Activity 已把外部 content:// 复制到
+    // 应用私有目录并在下一次启动时按时间清理，这里不动源文件。
+    platform::cleanup_staged(b);
     result
+}
+
+fn write_success(r: &crate::platform::ExecResult) -> bool {
+    let raw = r.combined();
+    r.code == 0
+        && (raw.contains("Success") || raw.contains("streamed") || raw.trim().is_empty())
 }
 
 fn execute_inner(
@@ -196,17 +205,49 @@ fn execute_inner(
     for (i, part) in plan_data.parts.iter().enumerate() {
         platform::publish_progress(b, "write_split", i + 1, total);
         let argv = plan::install_write_args(session, &part.name, part.size);
-        let r = platform::exec(b, &argv, &part.stdin)?;
-        let raw = r.combined();
-        let ok = r.code == 0
-            && (raw.contains("Success") || raw.contains("streamed") || raw.trim().is_empty());
+
+        // 首选：stdin 流式写入（不落盘）。平台侧若抛异常（例如 URI 读权限已失效、
+        // 管道破裂、Shizuku binder 断开），不能再把它当成 exit -1 直接失败：
+        // 先把该 split 复制到 shell 可读目录，用文件路径参数重试一次。
+        let mut ok = false;
+        let mut diagnostics = String::new();
+        match platform::exec(b, &argv, &part.stdin) {
+            Ok(r) => {
+                ok = write_success(&r);
+                if !ok {
+                    diagnostics = format!("stdin 写入 exit {}: {}", r.code, r.combined().trim());
+                }
+            }
+            Err(e) => diagnostics = format!("stdin 写入异常: {e}"),
+        }
+
+        if !ok {
+            match platform::stage_for_shell(b, &part.stdin, &part.name) {
+                Ok(path) => {
+                    let pargv = plan::install_write_path_args(
+                        session, &part.name, part.size, &path,
+                    );
+                    match platform::exec(b, &pargv, &StdinSource::None) {
+                        Ok(r2) => {
+                            ok = write_success(&r2);
+                            diagnostics.push_str(&format!(
+                                "; 文件路径重试 exit {}: {}",
+                                r2.code,
+                                r2.combined().trim()
+                            ));
+                        }
+                        Err(e) => diagnostics.push_str(&format!("; 文件路径重试异常: {e}")),
+                    }
+                }
+                Err(e) => diagnostics.push_str(&format!("; 无法准备文件路径: {e}")),
+            }
+        }
+
         if !ok {
             let _ = platform::exec(b, &plan::install_abandon_args(session), &StdinSource::None);
             return Err(CoreError::Write(format!(
-                "写入 {} 失败 (exit {}): {}",
-                part.name,
-                r.code,
-                raw.trim()
+                "写入 {} 失败: {}",
+                part.name, diagnostics
             )));
         }
         stages.push(Progress { stage: format!("write_split:{}", part.name), index: i + 1, total });
@@ -391,6 +432,31 @@ mod tests {
         assert_eq!(a["code"], "SHIZUKU_NOT_READY");
         assert_eq!(a["source"], "silent");
         assert!(!a["detail"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn execute_falls_back_to_file_path_when_stdin_write_fails() {
+        let b = MockBridge::new();
+        for _ in 0..2 { authorized(&b); }
+        b.push("exec", json!({"code":0,"stdout":"Success: created install session [9]","stderr":""}));
+        // stdin 写入模拟 Java 侧异常：平台桥接直接返回 error 字段
+        b.push("exec", json!({"error":"java.io.IOException: Broken pipe"}));
+        b.push("stageForShell", json!({"path":"/sdcard/stage/base.apk"}));
+        b.push("exec", json!({"code":0,"stdout":"Success","stderr":""}));
+        b.push("exec", json!({"code":0,"stdout":"Success","stderr":""}));
+        let plan_data = InstallPlan {
+            parts: vec![SplitPart { name: "base.apk".into(), size: 1, stdin: StdinSource::Uri { uri: "u".into() } }],
+            total_size: 1,
+            create_args: vec!["pm".into(), "install-create".into()],
+            package_hint: None, version_hint: None, label_hint: None, requires_confirmation: false,
+        };
+        let out = execute(&b, &plan_data, &InstallOptions::default()).unwrap();
+        assert!(out.outcome.ok);
+        let execs: Vec<_> = b.calls().into_iter().filter(|(m, _)| m == "exec").collect();
+        // create / stdin 写入 / 文件路径重试 / commit
+        assert_eq!(execs.len(), 4);
+        let retry = &execs[2].1["argv"];
+        assert!(retry.as_array().unwrap().last().unwrap().as_str() == Some("/sdcard/stage/base.apk"));
     }
 
     #[test]

@@ -17,6 +17,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -106,12 +108,16 @@ public final class ShizukuBridge {
                     return appLabel(a).toString();
                 case "callerLabel":
                     return callerLabel(a).toString();
+                case "stageForShell":
+                    return stageForShell(a).toString();
+                case "cleanupStaged":
+                    return cleanupStaged().toString();
                 default:
                     return error("unknown method: " + method);
             }
         } catch (Throwable t) {
             Log.e(TAG, "call(" + method + ") failed", t);
-            return error(t.toString());
+            return error(method + ": " + t.toString());
         }
     }
 
@@ -209,8 +215,18 @@ public final class ShizukuBridge {
         tErr.start();
 
         JSONObject stdinSpec = a.optJSONObject("stdin");
+        String stdinError = "";
         if (stdinSpec != null) {
-            pipeStdin(stdinSpec, stdin);
+            try {
+                pipeStdin(stdinSpec, stdin);
+            } catch (Throwable t) {
+                // 不能让异常冒到 call() 变成只有 {"error":...} 的裸响应：过去
+                // 上层会把缺失的 code 当成 -1、把缺失的 stderr 当成空串，
+                // 用户只看到「写入 base.apk 失败 (exit -1):」而无从排查。
+                // 这里把真实异常拼进 stderr，Rust 侧据此触发文件路径兜底重试。
+                stdinError = "stdin 写入失败: " + Log.getStackTraceString(t);
+                Log.e(TAG, stdinError, t);
+            }
         }
         try {
             stdin.flush();
@@ -222,10 +238,14 @@ public final class ShizukuBridge {
         tErr.join(60_000);
         int code = proc.waitFor();
 
+        String errText = new String(se.toByteArray(), StandardCharsets.UTF_8);
+        if (!stdinError.isEmpty()) {
+            errText = errText.isEmpty() ? stdinError : errText + "\n" + stdinError;
+        }
         JSONObject r = new JSONObject();
         r.put("code", code);
         r.put("stdout", new String(so.toByteArray(), StandardCharsets.UTF_8));
-        r.put("stderr", new String(se.toByteArray(), StandardCharsets.UTF_8));
+        r.put("stderr", errText);
         return r;
     }
 
@@ -417,6 +437,50 @@ public final class ShizukuBridge {
             }
         }
         return new JSONObject().put("deleted", deleted);
+    }
+
+    /**
+     * stdin 流式写入失败时的兜底：把该 split 复制到 shell 可读目录，
+     * 返回绝对路径，供 `pm install-write <session> <name> <path>` 使用。
+     * 完全绕开跨进程 stdin 管道，适配对 Shizuku newProcess stdin 支持不佳的 ROM。
+     */
+    private static JSONObject stageForShell(JSONObject a) throws Exception {
+        JSONObject spec = a.getJSONObject("stdin");
+        String name = a.optString("name", "base.apk");
+        File dir = StagedFiles.shellDir(App.context());
+        File[] old = dir.listFiles();
+        if (old != null) {
+            for (File f : old) {
+                try {
+                    f.delete();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        String safe = name.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (!safe.toLowerCase(Locale.ROOT).endsWith(".apk")) {
+            safe = safe + ".apk";
+        }
+        File dst = new File(dir, "stage_" + safe);
+        try (OutputStream os = new FileOutputStream(dst)) {
+            pipeStdin(spec, os);
+        }
+        if (dst.length() <= 0) {
+            throw new IllegalStateException("兜底文件为空，无法用文件路径写入");
+        }
+        // shell(uid 2000) 与 system 需要能读这个文件
+        dst.setReadable(true, false);
+        return new JSONObject()
+                .put("path", dst.getAbsolutePath())
+                .put("size", dst.length());
+    }
+
+    private static JSONObject cleanupStaged() {
+        try {
+            StagedFiles.cleanup(App.context());
+        } catch (Throwable ignored) {
+        }
+        return new JSONObject();
     }
 
     // ------------------------------------------------------------ 应用名称与列表
