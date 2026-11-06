@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -59,6 +60,7 @@ final class SilentTask implements Runnable {
             // 幂等兜底：TaskLauncher 已调用过 show；这里是后台任务的再次确认。
             // 无论有无悬浮窗权限都不会启动 Activity，屏幕始终只有系统悬浮小窗。
             FloatingIndicator.show(app, floating);
+            snapshotFocusWindow();
             try {
                 if (uninstall) {
                     runUninstall();
@@ -85,6 +87,34 @@ final class SilentTask implements Runnable {
         } catch (Throwable ignored) {
             // 配置读取失败时保持默认：显示指示器、只发降级通知，绝不自动弹界面
         }
+    }
+
+    /**
+     * 把安装开始时的焦点窗口写进 logcat（tag {@code SilentEntry}）。
+     *
+     * 纯诊断用途：若实机仍出现「遮罩 / 屏幕点不动」，`adb logcat -s SilentEntry`
+     * 会直接给出当时 mCurrentFocus / mFocusedApp 的窗口属主，无需再靠猜。
+     * 不写安装日志、不发通知，对用户完全无感。
+     */
+    private void snapshotFocusWindow() {
+        App.executor().execute(() -> {
+            try {
+                JSONArray arr = new JSONArray().put("sh").put("-c").put(
+                        "dumpsys window windows 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | head -4");
+                String resp = ShizukuBridge.call("exec",
+                        new JSONObject().put("argv", arr).toString());
+                if (resp == null) {
+                    return;
+                }
+                JSONObject o = new JSONObject(resp);
+                String out = o.optString("stdout", "").trim();
+                if (!out.isEmpty()) {
+                    Log.i("SilentEntry", "focus@install: " + out.replace('\n', ' '));
+                }
+            } catch (Throwable ignored) {
+                // 诊断失败不影响安装
+            }
+        });
     }
 
     // ---------------------------------------------------------------- 安装

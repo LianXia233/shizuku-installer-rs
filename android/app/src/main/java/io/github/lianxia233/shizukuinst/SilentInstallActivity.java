@@ -20,10 +20,12 @@ import java.util.List;
  * 零窗口契约（回归 Android 框架原生语义，不再与 ROM 争窗口参数）：
  *  - Manifest 使用 {@code @android:style/Theme.NoDisplay}，其
  *    {@code windowNoDisplay=true} 让 ActivityThread 跳过 {@code wm.addView}；
- *  - 本类绝不调用 {@code setContentView}、{@code getWindow()} 或任何
- *    Window/WindowManager 方法。一旦调用 installDecor，就会把一个本不该
- *    存在的窗口激活出来；而 makeVisible() 又会依据主题重新生成 LayoutParams，
- *    使代码里设置的 1x1 / NOT_TOUCHABLE / 清 DIM 全部失效。
+ *  - 本类绝不调用 {@code setContentView}、{@code getDecorView}、
+ *    {@code setAttributes} 或任何 installDecor 触发点。一旦 installDecor，
+ *    就会把一个本不该存在的窗口激活出来；而 makeVisible() 又会依据主题重新
+ *    生成 LayoutParams，使代码里设置的尺寸与 flags 全部失效。
+ *  - 仅保留一处 {@code Window.setFlags} 兜底（见 {@link #neutralizeWindow()}），
+ *    它只写 LayoutParams、不触发 installDecor，用于个别忽略 windowNoDisplay 的 ROM。
  *  - 因此屏幕上不存在任何本应用的窗口：没有透明遮罩、没有可聚焦窗口、
  *    不吞触摸、不染黑系统栏、不需要按返回键。
  *
@@ -259,23 +261,19 @@ public final class SilentInstallActivity extends Activity {
             DenyLog.record(App.context(), uninstall, label, caller, callerLabel);
             finishQuietly();
         } else if ("ASK".equals(decision)) {
-            // 用应用级 Context + NEW_TASK 启动：入口 Activity 马上 finish 且是
-            // noHistory，若复用它的 task，部分 ROM 会把刚启动的授权弹窗一起收掉。
-            android.content.Context app = App.context();
-            Intent auth = new Intent(app, CallerAuthActivity.class);
-            auth.putStringArrayListExtra(EXTRA_URIS, new ArrayList<>(uris));
-            auth.putExtra(EXTRA_CALLER, caller);
-            auth.putExtra(EXTRA_CALLER_LABEL, callerLabel);
-            auth.putExtra(EXTRA_LABEL, label);
-            auth.putExtra(EXTRA_UNINSTALL, uninstall);
-            auth.putExtra(EXTRA_UNINSTALL_PKG, uninstallPkg);
-            auth.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                    | Intent.FLAG_ACTIVITY_NO_ANIMATION
-                    | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            try {
-                app.startActivity(auth);
-            } catch (Throwable ignored) {
-            }
+            // 安装链路绝不创建任何窗口。
+            //
+            // 历史教训（第五轮实机反馈）：这里曾 startActivity 弹出 CallerAuthActivity
+            // 的 dialog，用户看到的是「一层遮罩弹窗、屏幕不能触摸」——即使我们把
+            // dim 关掉、把窗口限制成 WRAP_CONTENT，部分 ROM 仍会把 dialog 的
+            // decor 铺成整屏半透明背板并抢走焦点。@unknown 恒返回 ASK 且不可记住，
+            // 于是每次安装都会命中该分支，遮罩反复出现。
+            //
+            // 结论：安装过程中不允许出现任何由本应用创建的窗口。未授权的调用改为
+            // 「拒绝本次 + 发一条待授权通知」，用户点通知才进入授权页（那是用户
+            // 主动打开的普通页面，与静默链路完全解耦）。
+            DenyLog.record(App.context(), uninstall, label, caller, callerLabel, "ask");
+            Notifier.authPending(App.context(), label, caller, callerLabel);
             finishQuietly();
         } else {
             TaskLauncher.launch(this, uninstall, uris, uninstallPkg, caller, label);

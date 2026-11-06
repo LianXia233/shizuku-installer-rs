@@ -34,16 +34,11 @@
       因此正确解法是回归框架契约：原生主题 + 代码不碰 Window，不再自定义。
     -->
 
-    <!-- 授权卡片：唯一需要交互的界面。刻意不 dim、不抢焦点、不绘制系统栏，
-         让卡片之外的触摸与返回键都穿透到前台应用。 -->
-    <style name="Theme.AuthDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:windowIsFloating">true</item>
-        <item name="android:backgroundDimEnabled">false</item>
-        <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:textColorPrimary">@color/text_primary</item>
-        <item name="android:textColorSecondary">@color/text_secondary</item>
-    </style>
+    <!--
+      授权页不再使用 Dialog 主题。
+      Dialog 窗口会自带一层浮层，在部分 ROM 上被铺成整屏半透明背板，正是
+      「一层遮罩弹窗、屏幕点不动」的来源。授权页改用普通不透明的 AppTheme，
+      并且不在安装链路上启动（未授权调用只发通知，用户点通知才打开）。
+    -->
 
 </resources>

@@ -1,12 +1,7 @@
 package io.github.lianxia233.shizukuinst;
 
 import android.app.Activity;
-import android.graphics.Color;
-import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
-import android.view.Gravity;
-import android.view.Window;
-import android.view.WindowManager;
 import android.widget.CheckBox;
 import android.widget.TextView;
 
@@ -16,11 +11,20 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 首次调用的授权弹窗。
+ * 静默安装授权页。
  *
- * 这是整条静默链路里唯一会显示界面的地方（用户必须做一次决策），
- * 因此用标准的居中对话框主题并允许 dim。安装入口本身是 NoDisplay，
- * 用户点完按钮后本 Activity 立即销毁，安装期间屏幕上不再有本应用的窗口。
+ * 它现在是**普通、不透明、全屏的页面**，而不是 Dialog：
+ * Dialog 窗口在部分 ROM 上会被铺成整屏半透明背板，用户看到的就是「一层遮罩弹窗、
+ * 屏幕点不动」。普通页面有自己的不透明窗口和 {@code @color/window_bg} 背景，
+ * 不存在任何浮层，不遮挡前台应用，也不会抢走焦点。
+ *
+ * 更重要的是**它不在安装链路上**：静默入口遇到未授权调用时不会启动任何界面，
+ * 只发一条通知；用户点通知才会来到这里。因此安装过程中屏幕上不可能出现
+ * 由本应用创建的窗口。
+ *
+ * 两种进入方式：
+ *  - 从通知进入（无待安装 URI）：只做授权决定，并提示回到原应用重新发起；
+ *  - 带 URI 进入（兼容旧路径）：授权后直接交给后台任务。
  */
 public final class CallerAuthActivity extends Activity {
     private List<String> uris = new ArrayList<>();
@@ -34,14 +38,19 @@ public final class CallerAuthActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.dialog_auth);
-        hardenDialogWindow();
+        setContentView(R.layout.activity_auth);
         readExtras(getIntent());
 
         String who = callerLabel.trim().isEmpty()
                 ? getString(R.string.caller_unknown) : callerLabel.trim();
-        ((TextView) findViewById(R.id.authMessage)).setText(getString(
-                uninstall ? R.string.auth_dialog_uninstall : R.string.auth_dialog_install, who));
+        String message = uninstall
+                ? getString(R.string.auth_dialog_uninstall, who)
+                : getString(R.string.auth_dialog_install, who);
+        if (uris.isEmpty()) {
+            // 从通知进入：本次安装已被拦截，这里只负责授权
+            message = message + "\n\n" + getString(R.string.auth_page_pending);
+        }
+        ((TextView) findViewById(R.id.authMessage)).setText(message);
         ((TextView) findViewById(R.id.authCaller)).setText(
                 "@unknown".equals(caller) ? getString(R.string.caller_unknown) : caller);
 
@@ -50,43 +59,14 @@ public final class CallerAuthActivity extends Activity {
         if ("@unknown".equals(caller)) {
             remember.setEnabled(false);
             remember.setChecked(false);
+        } else {
+            // 从通知主动进来通常就是要长期放行，默认勾选，减少一次点击
+            remember.setChecked(uris.isEmpty());
         }
         findViewById(R.id.btnAllow).setOnClickListener(
                 v -> onDecision(true, remember.isChecked()));
         findViewById(R.id.btnDeny).setOnClickListener(
                 v -> onDecision(false, remember.isChecked()));
-    }
-
-    /**
-     * 把窗口显式约束成居中的浮动卡片，并且不产生任何全屏遮罩。
-     *
-     * Dialog 主题默认带 {@code FLAG_DIM_BEHIND}，会在整屏铺一层半透明黑背板 ——
-     * 这正是「一层透明遮罩」的另一来源。这里显式清掉 dim、把 dimAmount 置 0、
-     * 加 {@code FLAG_NOT_TOUCH_MODAL} 让卡片之外的触摸穿透到前台应用，
-     * 并清 {@code FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS} 避免染黑状态栏/导航栏。
-     * 卡片本身仍可聚焦可点击（按钮需要接收触摸与返回键），这是用户做授权
-     * 决策所必需的，且点完立即 finish。
-     */
-    private void hardenDialogWindow() {
-        try {
-            Window w = getWindow();
-            if (w == null) {
-                return;
-            }
-            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            w.setStatusBarColor(Color.TRANSPARENT);
-            w.setNavigationBarColor(Color.TRANSPARENT);
-            WindowManager.LayoutParams lp = w.getAttributes();
-            lp.width = WindowManager.LayoutParams.WRAP_CONTENT;
-            lp.height = WindowManager.LayoutParams.WRAP_CONTENT;
-            lp.gravity = Gravity.CENTER;
-            lp.dimAmount = 0f;
-            lp.flags &= ~(WindowManager.LayoutParams.FLAG_DIM_BEHIND
-                    | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-            lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
-            w.setAttributes(lp);
-        } catch (Throwable ignored) {
-        }
     }
 
     private void readExtras(android.content.Intent i) {
@@ -137,11 +117,11 @@ public final class CallerAuthActivity extends Activity {
         });
         if (!allow) {
             DenyLog.record(getApplicationContext(), uninstall, label, caller, callerLabel);
-        } else {
+        } else if (!uris.isEmpty()) {
+            // 只有真的带着待安装包时才继续安装；从通知进入没有包，仅完成授权
             TaskLauncher.launch(this, uninstall, uris, uninstallPkg, caller, label);
         }
         finish();
-        overridePendingTransition(0, 0);
     }
 
     @Override

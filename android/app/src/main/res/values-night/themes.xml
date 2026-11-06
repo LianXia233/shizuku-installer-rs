@@ -14,15 +14,5 @@
         <item name="android:fontFamily">sans</item>
     </style>
 
-    <!-- 夜间模式下授权卡片用深色父主题，保证 CheckBox / Button 文字可读。
-         与日间一致：不 dim、不抢焦点，卡片外区域不影响前台应用。 -->
-    <style name="Theme.AuthDialog" parent="android:style/Theme.Material.Dialog.Alert">
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:windowIsFloating">true</item>
-        <item name="android:backgroundDimEnabled">false</item>
-        <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:textColorPrimary">@color/text_primary</item>
-        <item name="android:textColorSecondary">@color/text_secondary</item>
-    </style>
+    <!-- 授权页沿用夜间 AppTheme（不透明页面），不再定义 Dialog 主题。 -->
 </resources>

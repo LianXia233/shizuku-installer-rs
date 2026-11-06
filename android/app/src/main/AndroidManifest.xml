@@ -102,14 +102,17 @@
             </intent-filter>
         </activity>
 
-        <!-- 首次调用的授权弹窗：整条链路唯一需要用户交互的界面 -->
+        <!--
+          静默安装授权页。刻意使用普通不透明主题（AppTheme），而不是 Dialog 主题：
+          Dialog 窗口在部分 ROM 上会被铺成整屏半透明背板，表现为「一层遮罩弹窗、
+          屏幕点不动」。普通页面有自己的不透明窗口，不存在任何浮层。
+          该页面**不在安装链路上**：未授权调用只发通知，用户点通知才会来到这里。
+        -->
         <activity
             android:name=".CallerAuthActivity"
             android:exported="false"
-            android:theme="@style/Theme.AuthDialog"
-            android:noHistory="true"
-            android:excludeFromRecents="true"
-            android:taskAffinity="" />
+            android:theme="@style/AppTheme"
+            android:excludeFromRecents="true" />
 
         <!-- 自家只读安装包容器：切断外部 content:// 临时授权的生命周期依赖 -->
         <provider

@@ -59,17 +59,23 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 - 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `SEND_MULTIPLE` / `DELETE` / `UNINSTALL_PACKAGE`
   意图由 `SilentInstallActivity` 接管。它**回归 Android 框架原生零窗口契约**：Manifest 直接
   引用 `@android:style/Theme.NoDisplay`（`windowNoDisplay=true` 让 `ActivityThread` 跳过
-  `wm.addView`），代码里绝不调用 `setContentView` / `getWindow()` / `setAttributes` /
-  `overridePendingTransition`，并在 `onCreate` 内立即 `finish()`。
-- 这是四轮实机反馈后的定论。此前自定义主题继承 `NoDisplay` 却又覆盖
+  `wm.addView`），代码里绝不调用 `setContentView` / `getDecorView` / `setAttributes` /
+  `overridePendingTransition`，并在 `onCreate` 内立即 `finish()`。仅保留一处
+  `Window.setFlags` 兜底（只写 LayoutParams、不触发 `installDecor`），用于个别忽略
+  `windowNoDisplay` 的 ROM。
+- 这是多轮实机反馈后的定论。此前自定义主题继承 `NoDisplay` 却又覆盖
   `windowIsFloating` + `windowIsTranslucent`，floating+translucent 会强制系统创建一个带
   **半透明背板**的窗口 —— 即反复出现的「一层透明遮罩」；它同时是可聚焦窗口，吞触摸、
   需按返回才消失。代码里 `hardenWindow()` 调用 `setAttributes` / `setBackgroundDrawable`
   / `setStatusBarColor` 会 `installDecor` 把窗口激活，而 `makeVisible()` 又依据主题重新
   生成 LayoutParams，把 1x1 / NOT_TOUCHABLE / 清 DIM 全部覆盖，所以补丁始终无效。
   正确解法是**不与 ROM 争窗口参数**：原生主题 + 代码不碰 Window，从源头零窗口。
-- 唯一需要交互的 `CallerAuthActivity`（授权卡片）也**不带 dim**：清 `FLAG_DIM_BEHIND`、
-  `dimAmount=0`、加 `FLAG_NOT_TOUCH_MODAL`，卡片之外触摸与返回键都穿透前台应用。
+- **安装链路零窗口**：入口遇到 `ASK` 时不再 `startActivity` 弹任何 dialog —— 那正是
+  「一层遮罩弹窗、屏幕点不动」的最后来源（Dialog 窗口在部分 ROM 上会被铺成整屏半透明
+  背板并抢焦点）。未授权调用改为「拦截本次 + 发一条待授权通知」，用户点通知才进入授权页。
+- 授权页 `CallerAuthActivity` 因此改成了**普通不透明页面**（`@style/AppTheme`），不再使用
+  Dialog 主题，也不带 `dim`，不存在任何浮层；且它已完全脱离安装链路，安装过程中屏幕上
+  不可能出现由本应用创建的窗口。
 - 「按返回才能继续操作」是**顶层存在可聚焦窗口**的确定信号：系统悬浮窗是
   `FLAG_NOT_FOCUSABLE`，按返回不会作用于它；只有 Activity 窗口会接收返回键。
   因此静默链路在正常路径上不启动任何 Activity —— 失败降级默认也只发通知。
@@ -80,7 +86,7 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 - 入口通过 `getCallingPackage()`、`getReferrer()` 与 `EXTRA_REFERRER*` 尽力识别调用方；
   识别不到一律视为匿名来源。Rust `auth::decide` 返回 `ALLOW` / `ASK` / `DENY`：
   - `ALLOW`：直接执行；
-  - `ASK`：转交给独立的 `CallerAuthActivity`（居中卡片）询问「允许 / 拒绝」，可勾选「记住本次选择」；
+  - `ASK`：**拦截本次安装**并发「待授权」通知，点通知进入授权页勾选「记住」；
   - `DENY`：静默阻止并记一条日志。
   匿名来源**永远不能被永久记住**，否则一次允许会放行后续所有匿名调用。
 - 用户完成授权（或已获授权）后，入口立即销毁，安装交给 `SilentTask` 在应用进程后台线程

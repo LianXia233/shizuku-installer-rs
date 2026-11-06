@@ -161,6 +161,41 @@ final class Notifier {
         post(c, b);
     }
 
+    /**
+     * 未授权调用被拦截后的唯一反馈：一条可点击的通知。
+     *
+     * 安装过程中不启动任何 Activity —— 用户点通知才打开授权页（普通不透明页面），
+     * 这是「安装链路零窗口」契约的核心。@unknown 恒返回 ASK 且不可记住，
+     * 若在入口里弹 dialog，等于每次安装都往屏幕上盖一层窗口。
+     */
+    static void authPending(Context c, String label, String caller, String callerLabel) {
+        ensureChannels(c);
+        String who = callerLabel == null || callerLabel.trim().isEmpty()
+                ? c.getString(R.string.caller_unknown) : callerLabel.trim();
+        String title = c.getString(R.string.notify_auth_pending_title);
+        String text = c.getString(R.string.notify_auth_pending, who);
+        if (!allowed(c)) {
+            toast(c, title + " · " + who);
+            return;
+        }
+        Intent auth = new Intent(c, CallerAuthActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(SilentInstallActivity.EXTRA_CALLER, caller)
+                .putExtra(SilentInstallActivity.EXTRA_CALLER_LABEL, who)
+                .putExtra(SilentInstallActivity.EXTRA_LABEL, label);
+        PendingIntent pi = PendingIntent.getActivity(c, 41, auth,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        post(c, builder(c, CH_RESULT)
+                .setSmallIcon(R.drawable.ic_action_notification)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC));
+    }
+
     /** 调用方被拒绝：明确告知「已阻止」，而不是伪装成安装失败。 */
     static void denied(Context c, String label, String callerLabel) {
         ensureChannels(c);

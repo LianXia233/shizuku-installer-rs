@@ -99,6 +99,10 @@
     <string name="auth_allow">允许</string>
     <string name="auth_denied">已阻止 %1$s 的静默安装请求</string>
     <string name="notify_auth_denied_title">已阻止静默安装</string>
+    <string name="notify_auth_pending_title">静默安装请求已拦截</string>
+    <string name="notify_auth_pending">%1$s 请求静默安装，但未获授权。点击查看并授权后，回到该应用重新发起安装即可。</string>
+    <string name="auth_page_pending">本次安装已被拦截。授权后请回到该应用重新发起安装。</string>
+    <string name="auth_page_hint">授权页由你主动打开，不会在安装过程中自动弹出。</string>
     <string name="notify_fallback_title">%1$s 静默安装未成功</string>
     <string name="notify_fallback_text">点击此通知可改用系统安装器手动安装；不会自动弹出任何界面</string>
 
