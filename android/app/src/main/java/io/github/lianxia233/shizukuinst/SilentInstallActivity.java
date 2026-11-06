@@ -3,13 +3,9 @@ package io.github.lianxia233.shizukuinst;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.Intent;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
-import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.Gravity;
 import android.view.Window;
 import android.view.WindowManager;
 
@@ -21,20 +17,19 @@ import java.util.List;
 /**
  * 外部「打开方式 / 分享 / 安装 / 卸载」意图的入口。
  *
- * 关键：不指望任何主题的「不显示窗口」承诺。
+ * 零窗口契约（回归 Android 框架原生语义，不再与 ROM 争窗口参数）：
+ *  - Manifest 使用 {@code @android:style/Theme.NoDisplay}，其
+ *    {@code windowNoDisplay=true} 让 ActivityThread 跳过 {@code wm.addView}；
+ *  - 本类绝不调用 {@code setContentView}、{@code getWindow()} 或任何
+ *    Window/WindowManager 方法。一旦调用 installDecor，就会把一个本不该
+ *    存在的窗口激活出来；而 makeVisible() 又会依据主题重新生成 LayoutParams，
+ *    使代码里设置的 1x1 / NOT_TOUCHABLE / 清 DIM 全部失效。
+ *  - 因此屏幕上不存在任何本应用的窗口：没有透明遮罩、没有可聚焦窗口、
+ *    不吞触摸、不染黑系统栏、不需要按返回键。
  *
- * 之前四轮分别试过全屏 translucent、不透明 1x1、Theme.NoDisplay，在部分国产
- * ROM 上始终出现「状态栏/导航栏变黑、触摸被吞、必须按返回才能恢复」。共同机制是：
- * 系统仍为这个 Activity 创建了一个可聚焦的透明窗口，按 windowIsTranslucent
- * 接管了系统栏配色，并把它作为焦点窗口接收按键。
- *
- * 因此这里在 onCreate 里显式把窗口参数写死（见 hardenWindow）：1x1、
- * NOT_FOCUSABLE、NOT_TOUCHABLE、NOT_TOUCH_MODAL、不绘制系统栏背景、系统栏透明色、
- * 无 dim。这样无论 ROM 是否真的创建窗口，都不会抢焦点、不吞触摸、不染黑系统栏，
- * 用户也就不必再按返回键。
- *
- * 注意：windowIsTranslucent=false + @null 背景会得到 opaque surface 并合成出整屏
- * 纯黑，所以主题必须保持 translucent。
+ * 之前四轮（全屏 translucent、不透明 1x1、floating translucent、代码加固）
+ * 都失败，根因正是自定义主题覆盖了 windowIsFloating/windowIsTranslucent，
+ * floating + translucent 强制系统创建带半透明背板的窗口 —— 即那层「透明遮罩」。
  *
  * 本 Activity 只负责三件事，随后立刻 finish：
  *   1. 在仍持有外部 URI 读权限时把安装包复制到应用私有缓存（{@link StagedFiles}）；
@@ -62,10 +57,9 @@ public final class SilentInstallActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // 绝不 setContentView。窗口参数必须显式写死，不能依赖 NoDisplay 的实现：
-        // 已有实机证据表明部分 ROM 会忽略 windowNoDisplay，仍创建一个可聚焦的
-        // 透明全屏窗口（黑系统栏、吞触摸、按返回才消失）。
-        hardenWindow();
+        // 绝不 setContentView、绝不 getDecorView()/installDecor()。Theme.NoDisplay 的
+        // windowNoDisplay=true 让 ActivityThread 跳过 wm.addView，框架层面就没有窗口。
+        neutralizeWindow();
         // NoDisplay 要求 Activity 在 onResume 之前 finish；用 try/finally 保证
         // 任何异常路径（坏 Parcelable、通知服务不可用等）都立即销毁。
         try {
@@ -91,43 +85,35 @@ public final class SilentInstallActivity extends Activity {
     }
 
     /**
-     * 把可能存在的窗口彻底做成「不可聚焦、不可触摸、1x1、不绘制系统栏」。
+     * 纯 flags 兜底：只改窗口属性，绝不触碰 decor。
      *
-     * 在标准 AOSP 上 Theme.NoDisplay 不创建窗口，这些参数只是无害的兜底；
-     * 在会创建窗口的 ROM 上，它们才是真正起作用的保险：
-     *  - FLAG_NOT_FOCUSABLE：窗口不再成为焦点窗口，返回键不会落到它上面，
-     *    用户不会遇到「必须按返回才能操作」的情况；
-     *  - FLAG_NOT_TOUCHABLE / NOT_TOUCH_MODAL：所有触摸穿透到前台应用；
-     *  - 清 FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS + 透明系统栏色：不接管也不染黑
-     *    状态栏/导航栏；
-     *  - 1x1 + TOP|START + dimAmount=0：不覆盖屏幕、不加暗色遮罩。
+     * {@code Window.setFlags} / {@code setDimAmount} 只写
+     * {@code WindowManager.LayoutParams}，不会触发 {@code installDecor()}，
+     * 因此不会把 NoDisplay 的「零窗口」契约破坏掉：
+     *  - 框架遵守 windowNoDisplay 时不 addView，本方法实际上是无副作用的空操作；
+     *  - 个别忽略 windowNoDisplay 的 ROM 真建了窗口时，addView 用的是
+     *    {@code getWindow().getAttributes()}，这里的 NOT_FOCUSABLE /
+     *    NOT_TOUCHABLE / 清 DIM 会生效，窗口既不抢焦点、不吞触摸、也不带暗色遮罩，
+     *    用户感知不到一层「透明遮罩」，也不需要按返回键。
      */
-    private void hardenWindow() {
+    private void neutralizeWindow() {
         try {
             Window w = getWindow();
             if (w == null) {
                 return;
             }
-            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            w.setStatusBarColor(Color.TRANSPARENT);
-            w.setNavigationBarColor(Color.TRANSPARENT);
-            WindowManager.LayoutParams lp = w.getAttributes();
-            lp.width = 1;
-            lp.height = 1;
-            lp.gravity = Gravity.TOP | Gravity.START;
-            lp.x = 0;
-            lp.y = 0;
-            lp.dimAmount = 0f;
-            lp.format = PixelFormat.TRANSLUCENT;
-            lp.windowAnimations = 0;
-            lp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
-            lp.flags &= ~(WindowManager.LayoutParams.FLAG_DIM_BEHIND
-                    | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-            w.setAttributes(lp);
+            w.setFlags(
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                            | WindowManager.LayoutParams.FLAG_DIM_BEHIND
+                            | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            w.setDimAmount(0f);
         } catch (Throwable ignored) {
-            // 某些 ROM 对 NoDisplay Activity 的 Window 做限制；主题层仍有兜底。
+            // ROM 限制时忽略；NoDisplay 本身仍保证不创建窗口。
         }
     }
 
@@ -315,7 +301,8 @@ public final class SilentInstallActivity extends Activity {
             return;
         }
         ended = true;
+        // 只 finish，不调用 overridePendingTransition 等任何窗口转场 API：
+        // Theme.NoDisplay 下框架未 addView，无需转场，也避免触碰 decor。
         finish();
-        overridePendingTransition(0, 0);
     }
 }

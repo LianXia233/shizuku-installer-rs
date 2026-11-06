@@ -13,3 +13,9 @@ local.properties
 *.keystore
 *.jks
 .DS_Store
+
+# 仅本地的过程文档，绝不进入公开仓库
+SPEC.md
+CLEAN_ROOM.md
+BUILD_REPORT.md
+docs/

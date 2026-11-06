@@ -57,13 +57,19 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 ### 静默安装流程
 
 - 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `SEND_MULTIPLE` / `DELETE` / `UNINSTALL_PACKAGE`
-  意图由 `SilentInstallActivity` 接管。它**不依赖任何主题的「不显示窗口」承诺**：主题层保持
-  translucent + floating + 透明背景 + 不绘制系统栏背景，代码层在 `onCreate` 里显式把窗口压到
-  1x1、加 `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE | FLAG_NOT_TOUCH_MODAL`、清
-  `FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS` 与 `FLAG_DIM_BEHIND`、系统栏色置透明，然后立即 finish。
-  这样即便 ROM 忽略 `windowNoDisplay` 仍创建了窗口，它也不抢焦点、不吞触摸、不染黑系统栏，
-  用户无需按返回键。前提是主题必须是 translucent：`windowIsTranslucent=false` + `@null` 背景
-  会拿到 opaque surface 并合成整屏纯黑。
+  意图由 `SilentInstallActivity` 接管。它**回归 Android 框架原生零窗口契约**：Manifest 直接
+  引用 `@android:style/Theme.NoDisplay`（`windowNoDisplay=true` 让 `ActivityThread` 跳过
+  `wm.addView`），代码里绝不调用 `setContentView` / `getWindow()` / `setAttributes` /
+  `overridePendingTransition`，并在 `onCreate` 内立即 `finish()`。
+- 这是四轮实机反馈后的定论。此前自定义主题继承 `NoDisplay` 却又覆盖
+  `windowIsFloating` + `windowIsTranslucent`，floating+translucent 会强制系统创建一个带
+  **半透明背板**的窗口 —— 即反复出现的「一层透明遮罩」；它同时是可聚焦窗口，吞触摸、
+  需按返回才消失。代码里 `hardenWindow()` 调用 `setAttributes` / `setBackgroundDrawable`
+  / `setStatusBarColor` 会 `installDecor` 把窗口激活，而 `makeVisible()` 又依据主题重新
+  生成 LayoutParams，把 1x1 / NOT_TOUCHABLE / 清 DIM 全部覆盖，所以补丁始终无效。
+  正确解法是**不与 ROM 争窗口参数**：原生主题 + 代码不碰 Window，从源头零窗口。
+- 唯一需要交互的 `CallerAuthActivity`（授权卡片）也**不带 dim**：清 `FLAG_DIM_BEHIND`、
+  `dimAmount=0`、加 `FLAG_NOT_TOUCH_MODAL`，卡片之外触摸与返回键都穿透前台应用。
 - 「按返回才能继续操作」是**顶层存在可聚焦窗口**的确定信号：系统悬浮窗是
   `FLAG_NOT_FOCUSABLE`，按返回不会作用于它；只有 Activity 窗口会接收返回键。
   因此静默链路在正常路径上不启动任何 Activity —— 失败降级默认也只发通知。

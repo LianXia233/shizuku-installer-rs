@@ -15,44 +15,32 @@
     </style>
 
     <!--
-      外部安装意图的入口。
+      静默安装入口不在此定义主题。
 
-      重要经验：单靠 Theme.NoDisplay（windowNoDisplay=true）在部分国产 ROM 上
-      并不可靠 —— 系统仍会为它创建一个全屏 translucent 窗口，抢焦点、吞触摸，
-      并把状态栏/导航栏刷成黑色；用户必须按返回键把它销毁才能继续操作。
+      AndroidManifest.xml 里 SilentInstallActivity 直接引用框架
+      @android:style/Theme.NoDisplay：windowNoDisplay=true 让 ActivityThread
+      跳过 wm.addView，从源头不创建任何窗口；Activity 也绝不调用
+      getWindow() / setContentView()，并在 onCreate 内立即 finish。
 
-      因此这里做两层保证：
-      1) 主题层：显式 translucent + floating + 透明背景 + 不绘制系统栏背景，
-         即便 ROM 真的创建了窗口，它也不会是 opaque 黑屏、不会接管系统栏配色；
-      2) 代码层：SilentInstallActivity.onCreate 把窗口压到 1x1、加
-         FLAG_NOT_FOCUSABLE / FLAG_NOT_TOUCHABLE / FLAG_NOT_TOUCH_MODAL、
-         清 FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS，彻底做到不抢焦点、不吞触摸、
-         不染黑系统栏，并且立刻 finish。
+      历史教训（四轮实机反馈的根因）：
+      1) 自定义主题继承 NoDisplay 却又覆盖 windowIsFloating / windowIsTranslucent，
+         floating + translucent 会强制系统创建一个带半透明背板的窗口 —— 即
+         「一层透明遮罩」，且它是可聚焦窗口，吞触摸、需按返回才消失；
+      2) 代码里 hardenWindow() 调用 setAttributes / setBackgroundDrawable /
+         setStatusBarColor 会 installDecor，把本不该存在的窗口「激活」出来；
+         而 makeVisible() 依据主题重新生成 LayoutParams，代码里写的
+         1x1 / NOT_TOUCHABLE / 清 DIM 全部被覆盖，所以补丁始终无效。
 
-      两层互相独立，任何一层生效都能保证屏幕上没有可感知的窗口。
+      因此正确解法是回归框架契约：原生主题 + 代码不碰 Window，不再自定义。
     -->
-    <style name="Theme.SilentEntry" parent="android:style/Theme.NoDisplay">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowIsFloating">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:windowContentOverlay">@null</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:windowActionBar">false</item>
-        <item name="android:backgroundDimEnabled">false</item>
-        <item name="android:windowAnimationStyle">@null</item>
-        <item name="android:windowDisablePreview">true</item>
-        <item name="android:colorBackgroundCacheHint">@null</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowDrawsSystemBarBackgrounds">false</item>
-    </style>
 
-    <!-- 首次调用的授权卡片：整条链路唯一需要用户交互的界面，居中对话框 + dim 是合理的 -->
+    <!-- 授权卡片：唯一需要交互的界面。刻意不 dim、不抢焦点、不绘制系统栏，
+         让卡片之外的触摸与返回键都穿透到前台应用。 -->
     <style name="Theme.AuthDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowIsFloating">true</item>
-        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>

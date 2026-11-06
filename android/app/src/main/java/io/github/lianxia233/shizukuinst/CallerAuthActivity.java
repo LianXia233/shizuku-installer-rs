@@ -58,9 +58,14 @@ public final class CallerAuthActivity extends Activity {
     }
 
     /**
-     * 把窗口显式约束成居中的浮动卡片，避免某些 ROM 把 Dialog 主题拉伸成一个
-     * 全屏透明窗口（那样用户看不到卡片，只会觉得「屏幕卡住、要按返回」）。
-     * 同时不让它绘制系统栏背景，避免把状态栏/导航栏染黑。
+     * 把窗口显式约束成居中的浮动卡片，并且不产生任何全屏遮罩。
+     *
+     * Dialog 主题默认带 {@code FLAG_DIM_BEHIND}，会在整屏铺一层半透明黑背板 ——
+     * 这正是「一层透明遮罩」的另一来源。这里显式清掉 dim、把 dimAmount 置 0、
+     * 加 {@code FLAG_NOT_TOUCH_MODAL} 让卡片之外的触摸穿透到前台应用，
+     * 并清 {@code FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS} 避免染黑状态栏/导航栏。
+     * 卡片本身仍可聚焦可点击（按钮需要接收触摸与返回键），这是用户做授权
+     * 决策所必需的，且点完立即 finish。
      */
     private void hardenDialogWindow() {
         try {
@@ -75,8 +80,10 @@ public final class CallerAuthActivity extends Activity {
             lp.width = WindowManager.LayoutParams.WRAP_CONTENT;
             lp.height = WindowManager.LayoutParams.WRAP_CONTENT;
             lp.gravity = Gravity.CENTER;
-            lp.dimAmount = 0.32f;
-            lp.flags &= ~WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS;
+            lp.dimAmount = 0f;
+            lp.flags &= ~(WindowManager.LayoutParams.FLAG_DIM_BEHIND
+                    | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
             w.setAttributes(lp);
         } catch (Throwable ignored) {
         }

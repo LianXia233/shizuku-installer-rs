@@ -61,13 +61,21 @@
             android:label="@string/logs_title" />
 
         <!--
-          外部安装/卸载意图的无窗口入口：Theme.SilentEntry 不创建任何可见窗口，
-          在 onCreate 内完成 URI 复制与授权判断后立即 finish，不拉起主界面。
+          外部安装/卸载意图的无窗口入口。
+
+          直接使用框架 android:style/Theme.NoDisplay：它的 windowNoDisplay=true
+          会让 ActivityThread 在 handleResumeActivity 时跳过 wm.addView，从源头
+          不创建任何窗口。这是唯一能杜绝「透明遮罩 / 可聚焦窗口 / 黑系统栏」的做法。
+
+          绝不在本应用自定义主题里覆盖 windowIsFloating / windowIsTranslucent：
+          floating+translucent 会强制系统创建带半透明背板的窗口，且 decor 一旦
+          被创建，代码里 setAttributes 的 1x1 / NOT_TOUCHABLE / 清 DIM 都会被
+          PhoneWindow.makeVisible() 依据主题重新生成的 LayoutParams 覆盖掉。
         -->
         <activity
             android:name=".SilentInstallActivity"
             android:exported="true"
-            android:theme="@style/Theme.SilentEntry"
+            android:theme="@android:style/Theme.NoDisplay"
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:autoRemoveFromRecents="true"
