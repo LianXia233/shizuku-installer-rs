@@ -164,7 +164,7 @@ dependencies = [
 
 [[package]]
 name = "shizuku-android-ffi"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "jni",
  "serde_json",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "shizuku-core"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "serde",
  "serde_json",

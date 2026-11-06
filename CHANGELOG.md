@@ -5,6 +5,53 @@
 
 ---
 
+## v1.0.4
+
+### 新增
+
+- **支持社交软件追加后缀的安装包**：微信 / QQ 等转发 APK 时常把
+  `xxx.apk` 改成 `xxx.apk.1`（也有 `.2`、多位数字、`.bin`、`.download` 等），
+  文件本体仍是原 APK。现在 `FileNames.normalize()` 与 Rust
+  `util::normalize_name()` 会在链路最前端剥掉这层后缀，
+  `xxx.apk.1` 按单个 APK 安装，`xxx.apks.1` 仍按归档拆分；
+  staged 缓存文件名、通知 / 日志显示名同步归一，不再出现 `xxx.apk.1.apk`。
+- **声明备份后缀**：`AndroidManifest.xml` 新增独立的扩展名分组，
+  显式声明 `.*\\.apk\\.1` / `.*\\.APK\\.1` 及全部格式的 `.<后缀>` 通配；
+  VIEW 组补 `*/*` MIME 兜底，覆盖社交软件把安装包标成未知类型的情形。
+  入口仍按归一化后的显示名过滤图片 / 文本 / 音视频等无关文件。
+- **授权弹窗改由短时前台服务承载**：新增 `AuthForegroundService`
+  （`shortService`）。入口 `SilentInstallActivity` 对普通调用会立即 `finish`，
+  进程随即降为 cached，异步申请完 `SYSTEM_ALERT_WINDOW` 再 `addView` 往往
+  来不及，国产 ROM 上表现为「弹窗根本没弹出来」。前台服务把进程钉在前台
+  优先级，悬浮卡片因此能稳定浮在当前应用之上；用户决策或 90 秒超时后
+  立即 `stopForeground` + `stopSelf`，通知同步移除，不做任何常驻。
+- **横幅通知可当场决策**：悬浮窗权限拿不到时退化为一条 heads-up 通知，
+  带「允许并继续 / 拒绝」两个按钮，按钮通过前台服务携带完整请求快照
+  （staged URI + 原始 URI + 调用方），点按即完成授权并续装本次请求，
+  无需切回本应用；不再降级成只有「待授权」文字的旧式通知。
+
+### 优化
+
+- **设置页应用列表不再被压缩**：「授权与安装行为」的五个开关与「高级白名单」
+  改为默认折叠，应用授权列表卡片 `weight=1` 占满剩余空间，内部列表再加
+  `minHeight=180dp` 兜底，任何屏幕下都能显示多条并正常滚动。
+- **关于页开源许可结构化**：从两段纯文本改为逐项列出实际使用的开源组件
+  （Shizuku API、serde、serde_json、thiserror、jni、Rust 标准库、Android SDK /
+  AGP），每项标注许可、用途，点击可跳转上游仓库；`Cargo.toml` 的 `license`
+  与 `repository` 修正为真实值，删除不准确的自证式表述。
+- **本地与云编译签名统一**：`android/app/signing/release.keystore` 随仓库分发，
+  `build.gradle.kts` 让 `debug`（`scripts/build.sh` 走 `assembleDebug`）与
+  `release` 都显式指向它。此前两端各自使用随机生成的 `~/.android/debug.keystore`
+  （实测证书 SHA-256 分别为 `a38042a6…` 与 `61e339a9…`），产物无法互相覆盖安装。
+  该密钥为公开自签名密钥，仅用于保证构建可复现与版本间签名一致。
+
+### 注意
+
+- v1.0.4 起签名证书变更，**从 v1.0.3 及更早版本覆盖安装会提示签名不一致**，
+  需先卸载旧版再安装；此后各版本签名保持一致，可正常覆盖升级。
+
+---
+
 ## v1.0.3
 
 ### 新增

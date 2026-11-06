@@ -22,7 +22,7 @@ pub struct Guidance {
     pub hint: String,
 }
 
-/// 状态对应的下一步引导。文案为本实现原创。
+/// 状态对应的下一步引导。
 pub fn guidance(status: ShizukuStatus) -> Guidance {
     let (title, action, hint) = match status {
         ShizukuStatus::Unavailable => (

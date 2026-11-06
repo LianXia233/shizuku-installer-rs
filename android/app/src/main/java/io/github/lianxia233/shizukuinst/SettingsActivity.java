@@ -104,6 +104,17 @@ public final class SettingsActivity extends Activity {
                     ? R.string.advanced_collapse : R.string.advanced_expand);
         });
 
+        // 安装行为开关默认折叠：把垂直空间留给应用授权列表，避免列表被压到
+        // 只剩一行而无法滚动（1.0.3 的实测问题）。
+        final LinearLayout optionsBody = findViewById(R.id.optionsBody);
+        final TextView optionsArrow = findViewById(R.id.optionsArrow);
+        findViewById(R.id.optionsToggle).setOnClickListener(v -> {
+            boolean expand = optionsBody.getVisibility() != View.VISIBLE;
+            optionsBody.setVisibility(expand ? View.VISIBLE : View.GONE);
+            optionsArrow.setText(expand
+                    ? R.string.advanced_collapse : R.string.advanced_expand);
+        });
+
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int a, int b, int c) {

@@ -80,13 +80,10 @@ final class AppNames {
         if (raw == null) {
             return null;
         }
-        String s = raw.trim();
-        int slash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
-        if (slash >= 0) {
-            s = s.substring(slash + 1);
-        }
+        // 社交软件转发的 xxx.apk.1 先归一化成 xxx.apk，再去扩展名。
+        String s = FileNames.normalize(raw);
         String low = s.toLowerCase(Locale.ROOT);
-        for (String ext : new String[]{".apk", ".apks", ".xapk", ".zip", ".akp"}) {
+        for (String ext : new String[]{".apkmx", ".apks", ".xapk", ".apkm", ".zip", ".akp", ".apk"}) {
             if (low.endsWith(ext)) {
                 s = s.substring(0, s.length() - ext.length());
                 break;

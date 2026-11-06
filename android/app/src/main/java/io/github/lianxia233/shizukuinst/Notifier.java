@@ -22,7 +22,9 @@ import java.util.ArrayList;
 final class Notifier {
     static final String CH_PROGRESS = "silent_progress";
     static final String CH_RESULT = "install_result";
+    static final String CH_AUTH_HEADS_UP = "auth_heads_up";
     private static final int ID = 2001;
+    private static final int ID_AUTH = 4102;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     private Notifier() {
@@ -44,6 +46,15 @@ final class Notifier {
                 c.getString(R.string.notify_channel), NotificationManager.IMPORTANCE_DEFAULT);
         r.setDescription(c.getString(R.string.notify_channel_desc));
         nm.createNotificationChannel(r);
+
+        // 悬浮窗被 ROM 拦下时的兜底：heads-up 横幅，带「允许 / 拒绝」按钮，
+        // 用户当场就能决策，不必切回本应用，也不会出现任何遮罩窗口。
+        NotificationChannel a = new NotificationChannel(CH_AUTH_HEADS_UP,
+                c.getString(R.string.auth_heads_up_channel), NotificationManager.IMPORTANCE_HIGH);
+        a.setDescription(c.getString(R.string.auth_heads_up_channel_desc));
+        a.enableVibration(false);
+        a.setSound(null, null);
+        nm.createNotificationChannel(a);
     }
 
     private static boolean allowed(Context c) {
@@ -215,6 +226,66 @@ final class Notifier {
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .setVisibility(Notification.VISIBILITY_PUBLIC));
+    }
+
+    /**
+     * 悬浮窗被 ROM 拦下时的兜底：一条 heads-up 横幅，带「允许 / 拒绝」两个按钮。
+     *
+     * 两个按钮都通过前台服务的 decisionIntent 携带完整请求快照（staged URI +
+     * 原始 URI + 调用方），用户当场点按即可完成授权并续装本次请求，无需切回
+     * 本应用，也不会拉起任何可聚焦窗口。正文点击才进入普通不透明授权页。
+     */
+    static void authHeadsUp(Context c, AuthPrompt.Req r) {
+        ensureChannels(c);
+        String who = r.callerLabel == null || r.callerLabel.trim().isEmpty()
+                ? c.getString(R.string.caller_unknown) : r.callerLabel.trim();
+        String title = c.getString(R.string.auth_heads_up_title, who);
+        String text = c.getString(R.string.auth_heads_up_text);
+        if (!allowed(c)) {
+            toast(c, title);
+            return;
+        }
+        Notification.Builder b = builder(c, CH_AUTH_HEADS_UP)
+                .setSmallIcon(R.drawable.ic_action_notification)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setCategory(Notification.CATEGORY_STATUS)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(false)
+                .setTimeoutAfter(90_000);
+        b.setContentIntent(PendingIntent.getActivity(c, 71,
+                AuthForegroundService.authPageIntent(c, r),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+        b.addAction(R.drawable.ic_action_install,
+                c.getString(R.string.auth_heads_up_allow),
+                PendingIntent.getForegroundService(c, 72,
+                        AuthForegroundService.decisionIntent(c, r, true),
+                        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+        b.addAction(R.drawable.ic_action_trash,
+                c.getString(R.string.auth_heads_up_deny),
+                PendingIntent.getForegroundService(c, 73,
+                        AuthForegroundService.decisionIntent(c, r, false),
+                        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
+        try {
+            NotificationManager nm = c.getSystemService(NotificationManager.class);
+            if (nm != null) {
+                nm.notify(ID_AUTH, b.build());
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 决策完成 / 卡片超时后撤掉横幅，避免重复询问。 */
+    static void cancelAuthHeadsUp(Context c) {
+        try {
+            NotificationManager nm = c.getSystemService(NotificationManager.class);
+            if (nm != null) {
+                nm.cancel(ID_AUTH);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     /** 调用方被拒绝：明确告知「已阻止」，而不是伪装成安装失败。 */

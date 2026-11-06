@@ -19,12 +19,12 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 | 编号 | 功能 | 实现位置 |
 |---|---|---|
 | F-01 | Shizuku 服务/授权状态检查、请求授权、引导 | `state.rs`, `api.rs`, `ShizukuBridge` |
-| F-02 | 静默安装（无确认、不弹界面）：单 APK / 多 split / 归档格式 | `install.rs`, `archive.rs`, `plan.rs`, `util.rs` |
+| F-02 | 静默安装（无确认、不弹界面）：单 APK / 多 split / 归档格式，含社交软件追加的 `.apk.1` 后缀 | `install.rs`, `archive.rs`, `plan.rs`, `util.rs`, `FileNames` |
 | F-03 | 静默卸载（含保留数据），从应用列表选择目标 | `uninstall.rs`, `AppPickerActivity`, `Uninstaller` |
 | F-04 | 免确认包名白名单；安装前确认为可选开关（默认关闭） | `config.rs`, `SettingsActivity` |
 | F-05 | 通知气泡显示安装中 / 进度 / 结果，一键启动、查看日志 | `Notifier`, `SilentTask` |
 | F-06 | 安装日志：自动记录、历史查看、导出分享、清空 | `logbook.rs`, `InstallLogStore`, `LogActivity` |
-| F-07 | **调用方授权**：首次调用直接在当前应用上方弹悬浮卡片询问；设置页按用户/系统应用筛选并勾选 | `auth.rs`, `AuthPrompt`, `SettingsActivity`, `AppList` |
+| F-07 | **调用方授权**：首次调用由短时前台服务保活，直接在当前应用上方弹悬浮卡片询问；无悬浮窗权限时退化为可当场决策的横幅通知；设置页按用户/系统应用筛选并勾选 | `auth.rs`, `AuthPrompt`, `AuthForegroundService`, `Notifier`, `SettingsActivity`, `AppList` |
 | F-08 | **无遮罩后台指示**：左上角科幻风旋转指示器，点击穿透、不染黑系统栏 | `FloatingIndicator`, `SciFiSpinner` |
 | F-09 | **失败降级（默认不打断）**：只发一条可点击通知，点通知才进系统安装器 | `SilentTask`, `Notifier` |
 | F-10 | **中文展示**：通知、日志、错误原因显示应用实际名称与中文说明 | `AppNames`, `apk_meta.rs`, `logbook.rs` |
@@ -43,13 +43,21 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 | `.xapk` / `.akp` | APKPure 等渠道的分片包 | 同上 |
 | `.apkm` / `.apkmx` | APKMirror 等渠道的分片包 | 同上 |
 | `.zip` | 包含多个 `.apk` 的通用归档 | 同上 |
+| `*.apk.1` / `*.apk.2` / `*.apk.bin` … | 微信 / QQ 等社交软件转发时追加的备份后缀，文件本体仍是原安装包 | 先剥掉后缀，再按真实扩展名处理 |
 | 多个 APK | 系统分享 / 文件管理器多选 | 合并为一次 multi-split 会话 |
+
+> 社交软件转发会把 `xxx.apk` 改成 `xxx.apk.1`（也有 `.2`、多位数字、`.bin`、
+> `.download` 等）以绕过系统安装器识别。`FileNames.normalize()` 与 Rust
+> `util::normalize_name()` 在链路最前端统一剥掉这层后缀：`xxx.apk.1` 按单个
+> APK 安装，`xxx.apks.1` 仍按归档拆分；staged 缓存文件名与通知 / 日志里的
+> 显示名同步归一，不会出现 `xxx.apk.1.apk` 这类拼接结果。
 
 拉起通道：
 
 - **打开方式 / 安装**：`ACTION_VIEW`、`ACTION_INSTALL_PACKAGE`，匹配 `content://` 与
-  `file://` + APK / 归档类 MIME；另有独立的扩展名分组（含大写形式），适配只给路径、
-  不给 MIME 的调用方。
+  `file://` + APK / 归档类 MIME，末尾用 `*/*` 兜底未知类型；另有独立的扩展名
+  分组（含大写形式）与「备份后缀」分组（`.*\.apk\.1`、`.*\.apk\..*` 等），
+  适配只给路径、不给 MIME 的调用方。
 - **系统分享**：`ACTION_SEND` / `ACTION_SEND_MULTIPLE` 独立分组，不声明 scheme，
   `mimeType` 用 `*/*` 兜底，保证系统分享菜单与第三方应用分享都能拉起。
   入口会按显示名过滤明显无关的类型（图片 / 文本 / 音视频等），不会误触发安装。
@@ -63,7 +71,8 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 │  MainActivity / SettingsActivity / AppPickerActivity / AboutActivity  │
 │  LogActivity (Java, UI 与生命周期)                                    │
 │  SilentInstallActivity (零/短窗口入口) · CallerAuthActivity (兜底页) │
-│  AuthPrompt (跨应用悬浮授权卡片) · StagedFiles + StagedProvider      │
+│  AuthPrompt (跨应用悬浮授权卡片) · AuthForegroundService (短时保活) │
+│  StagedFiles + StagedProvider · FileNames (后缀归一化)              │
 │  TaskLauncher · SilentTask (进程级后台任务) · FloatingIndicator      │
 │  Notifier · AppNames · AppList                                       │
 │        │  RustCore.dispatch(method, argsJson) : String               │
@@ -108,8 +117,14 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
   - `ASK`：**跨应用悬浮卡片**叠在当前应用上方直接询问，允许后立即续装本次请求，
     入口回传 `RESULT_CANCELED` + `CALLER_PENDING`；
   - `DENY`：静默阻止、记一条日志，回传 `RESULT_CANCELED`。
-- 拿不到悬浮窗权限时借 Shizuku(shell) 自动授权；仍失败则回退为一条「待授权」通知，
-  点通知进入普通不透明授权页，**不降级成 Activity/Dialog 弹窗**。
+- 卡片由 `AuthForegroundService`（`shortService`）承载：入口对普通调用会立即
+  `finish`，进程随即降为 cached，异步申请完悬浮窗权限再 `addView` 往往来不及，
+  国产 ROM 上表现为「弹窗没弹出来」。前台服务把进程钉在前台优先级，
+  决策完成或 90 秒超时后立即 `stopForeground` + `stopSelf`，不做常驻。
+- 拿不到悬浮窗权限时先借 Shizuku(shell) 自动授权；仍失败则退化为一条
+  **带「允许并继续 / 拒绝」按钮的横幅通知**，按钮携带完整请求快照，
+  点按即完成授权并续装本次请求，**不降级成需要切回本应用的普通页面**。
+  通知正文点击才进入普通不透明授权页，全程不弹 Activity/Dialog 遮罩窗口。
 - 匿名来源（识别不到调用方）**永远不能被永久记住**，否则一次允许会放行后续所有匿名调用。
 - 设置页列出系统已安装应用：支持「全部 / 用户应用 / 系统应用」筛选、搜索、一键清空，
   **已授权应用置顶**并带绿色徽章，系统应用以独立徽章标出。
@@ -162,6 +177,20 @@ python3 scripts/gen_axml_fixture.py             # 重新生成测试样本
 附上 APK（tag 形如 `v<version>-build.<run_number>`，依赖 `permissions: contents: write`，
 由 runner 预装的 `gh` CLI 完成，不使用第三方 release action）。
 
+### 签名一致性
+
+`android/app/signing/release.keystore` 随仓库分发，`build.gradle.kts` 让 `debug`
+（`scripts/build.sh` 走 `assembleDebug`）与 `release` 都显式指向它。因此**沙箱本地
+构建与 GitHub Actions 云构建产出的 APK 证书逐字节一致**，可以互相覆盖安装。
+
+此前两端各自使用随机生成的 `~/.android/debug.keystore`（实测证书 SHA-256 分别为
+`a38042a6…` 与 `61e339a9…`），导致同名版本无法覆盖升级、不同来源的 Release
+签名各不相同。固定密钥是唯一能保证两端一致的方案。
+
+> 该密钥是**公开的自签名密钥**，只用于保证构建可复现与版本间签名一致，
+> 不提供任何身份信任，请勿当作私有发布密钥使用。自 v1.0.4 起签名证书变更，
+> 从更早版本升级需先卸载旧版，此后各版本可正常覆盖安装。
+
 ## 6. 使用
 
 1. 安装并启动 Shizuku（无线调试或 root），确认服务运行中。
@@ -181,7 +210,7 @@ python3 scripts/gen_axml_fixture.py             # 重新生成测试样本
 |---|---|
 | Android 16 (API 36) | targetSdk 36；`android:exported` 显式声明；16KB page size |
 | Android 15 (API 35) | `fitsSystemWindows` + 系统栏配色；小窗口避开状态栏 |
-| Android 14 (API 34) | 无前台服务；`PendingIntent.FLAG_IMMUTABLE` |
+| Android 14 (API 34) | 授权询问用 `shortService` 前台服务保活；`PendingIntent.FLAG_IMMUTABLE`；FGS type 与 manifest 声明一致 |
 | Android 13 (API 33) | `POST_NOTIFICATIONS` 动态申请；通知渠道；themed icon |
 | Android 11+ (API 30) | `<queries>` 包可见性；`QUERY_ALL_PACKAGES` 用于枚举应用；全量 SAF |
 | Android 10+ (API 29) | 后台启动 Activity 受限，指示器与授权卡片改用系统悬浮窗 |
@@ -198,6 +227,7 @@ Cargo.toml                 Cargo workspace
 crates/core/               纯 Rust 业务逻辑 + 单元测试
 crates/android-ffi/        JNI cdylib
 android/                   Gradle 工程（Java 胶水、Manifest、资源）
+android/app/signing/       固定签名密钥（本地与云编译共用）
 icons/ scripts/            图标素材与构建/资源生成脚本
 .github/workflows/         CI（云编译并发布 Release）
 CHANGELOG.md               版本更新日志

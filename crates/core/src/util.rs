@@ -42,12 +42,61 @@ pub fn is_valid_package_name(s: &str) -> bool {
     })
 }
 
+/// 支持的真实扩展名（长在前，避免 `.apk` 抢先匹配 `.apks`）。
+const INSTALL_EXTS: &[&str] = &[".apkmx", ".apks", ".xapk", ".apkm", ".zip", ".akp", ".apk"];
+/// 社交软件常见的非数字重命名后缀。
+const RENAME_EXTS: &[&str] = &["bin", "download", "tmp", "bak", "temp", "save"];
+
+fn has_install_ext(name: &str) -> bool {
+    let low = name.to_ascii_lowercase();
+    INSTALL_EXTS.iter().any(|e| low.ends_with(e))
+}
+
+/// 剥离社交软件转发时追加的备份后缀。
+///
+/// 微信 / QQ 等把 `xxx.apk` 改成 `xxx.apk.1`（也有 `.2`、多位数字、
+/// `.bin` / `.download` 等）以绕过系统安装器识别，但文件本体仍是 APK。
+/// 多次转发会叠加成 `xxx.apk.1.1`，因此先把连续的「点 + 纯数字（≤3 位）」
+/// 或已知重命名后缀全部剥掉，再校验剩下的名字是否仍以某个安装包扩展名
+/// 结尾；不是就回退原名，避免把 `1.apk` / `note.txt` 之类误判。
+pub fn normalize_name(raw: &str) -> String {
+    let base = raw
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let mut s = base.clone();
+    for _ in 0..4 {
+        let Some(dot) = s.rfind('.') else { break };
+        if dot == 0 || dot + 1 >= s.len() {
+            break;
+        }
+        let tail = s[dot + 1..].to_ascii_lowercase();
+        let numeric = !tail.is_empty()
+            && tail.len() <= 3
+            && tail.bytes().all(|b| b.is_ascii_digit());
+        let renamed = RENAME_EXTS.contains(&tail.as_str());
+        if !numeric && !renamed {
+            break;
+        }
+        s = s[..dot].to_string();
+    }
+    if has_install_ext(&s) {
+        s
+    } else {
+        base
+    }
+}
+
 /// 把 SAF 提供的显示名推导为输入类型。
 ///
 /// 归档类（apks / xapk / apkm / zip）都按 zip 处理：内部只挑 `.apk` 条目，
 /// `base.apk` 优先，因此不同发行渠道的打包格式可以共用一条解析路径。
+/// 判定前先剥掉社交软件追加的 `.1` / `.bin` 等后缀，`xxx.apk.1` 因此
+/// 仍按单个 APK 处理，`xxx.apks.1` 仍按归档处理。
 pub fn kind_of(display_name: &str) -> &'static str {
-    let n = display_name.to_ascii_lowercase();
+    let n = normalize_name(display_name).to_ascii_lowercase();
     if n.ends_with(".apks") {
         "apks"
     } else if n.ends_with(".xapk") || n.ends_with(".akp") {
@@ -158,5 +207,58 @@ pub fn human_size(bytes: u64) -> String {
         format!("{} {}", bytes, U[i])
     } else {
         format!("{:.2} {}", v, U[i])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_strips_social_app_backup_suffix() {
+        assert_eq!(normalize_name("微信.apk.1"), "微信.apk");
+        assert_eq!(normalize_name("app.APK.1"), "app.APK");
+        assert_eq!(normalize_name("app.apk.2"), "app.apk");
+        assert_eq!(normalize_name("app.apk.12"), "app.apk");
+        assert_eq!(normalize_name("app.apk.1.1"), "app.apk");
+        assert_eq!(normalize_name("app.apks.1"), "app.apks");
+        assert_eq!(normalize_name("app.xapk.1"), "app.xapk");
+        assert_eq!(normalize_name("app.apkm.1"), "app.apkm");
+        assert_eq!(normalize_name("app.zip.1"), "app.zip");
+        assert_eq!(normalize_name("app.apk.bin"), "app.apk");
+        assert_eq!(normalize_name("app.apk.download"), "app.apk");
+        assert_eq!(normalize_name("/sdcard/Download/app.apk.1"), "app.apk");
+    }
+
+    #[test]
+    fn normalize_keeps_real_names_intact() {
+        assert_eq!(normalize_name("app.apk"), "app.apk");
+        assert_eq!(normalize_name("1.apk"), "1.apk");
+        assert_eq!(normalize_name("v2.3.apk"), "v2.3.apk");
+        assert_eq!(normalize_name("1234"), "1234");
+        assert_eq!(normalize_name("note.txt"), "note.txt");
+        assert_eq!(normalize_name(""), "");
+    }
+
+    #[test]
+    fn kind_of_handles_backup_suffix() {
+        assert_eq!(kind_of("app.apk.1"), "apk");
+        assert_eq!(kind_of("app.APK.1"), "apk");
+        assert_eq!(kind_of("app.apks.1"), "apks");
+        assert_eq!(kind_of("app.xapk.1"), "xapk");
+        assert_eq!(kind_of("app.akp.1"), "xapk");
+        assert_eq!(kind_of("app.apkm.1"), "apkm");
+        assert_eq!(kind_of("app.apkmx.1"), "apkm");
+        assert_eq!(kind_of("app.zip.1"), "zip");
+        assert_eq!(kind_of("app.apk"), "apk");
+        assert_eq!(kind_of("note.txt"), "unknown");
+    }
+
+    #[test]
+    fn installable_kind_matches_supported_set() {
+        assert!(is_installable_kind("apk"));
+        assert!(is_installable_kind("apks"));
+        assert!(is_installable_kind("zip"));
+        assert!(!is_installable_kind("unknown"));
     }
 }

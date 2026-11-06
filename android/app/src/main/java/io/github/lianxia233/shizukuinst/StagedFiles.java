@@ -9,7 +9,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -105,21 +104,16 @@ final class StagedFiles {
         os.flush();
     }
 
-    /** 保留原始扩展名：Rust 侧用 displayName 判定 apk / apks / xapk / apkm。 */
+    /** 保留真实扩展名：Rust 侧用 displayName 判定 apk / apks / xapk / apkm。 */
     private static String safeName(String raw) {
-        String s = raw == null ? "" : raw.trim();
-        int slash = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
-        if (slash >= 0) {
-            s = s.substring(slash + 1);
-        }
+        // 先剥掉社交软件追加的 .1 / .bin 等后缀，否则 xxx.apk.1 会被当成
+        // 未知类型再补一个 .apk，私有缓存里变成 xxx.apk.1.apk。
+        String s = FileNames.normalize(raw);
         s = s.replaceAll("[^A-Za-z0-9._-]", "_");
         if (s.length() > 80) {
             s = s.substring(s.length() - 80);
         }
-        String low = s.toLowerCase(Locale.ROOT);
-        if (!(low.endsWith(".apk") || low.endsWith(".apks")
-                || low.endsWith(".xapk") || low.endsWith(".apkm")
-                || low.endsWith(".zip"))) {
+        if (!FileNames.isInstallable(s)) {
             s = s + ".apk";
         }
         if (s.isEmpty() || s.startsWith(".")) {

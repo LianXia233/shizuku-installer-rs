@@ -270,7 +270,9 @@ public final class SilentInstallActivity extends Activity {
         if (uris.isEmpty()) {
             return;
         }
-        String name = AppNames.displayName(this, uris.get(0));
+        // 社交软件转发时会把 xxx.apk 改成 xxx.apk.1；归一化后再作为显示名，
+        // 通知与日志里不会出现多余的尾巴。
+        String name = FileNames.normalize(AppNames.displayName(this, uris.get(0)));
         label = name.isEmpty() ? "安装包" : name;
         valid = true;
     }
@@ -289,18 +291,20 @@ public final class SilentInstallActivity extends Activity {
      * content:// 只给数字 ID）时放行，交给 Rust 按文件内容判定，不误拒 APK。
      */
     private boolean plausibleInstallSource(Uri u) {
-        String name = rawDisplayName(u).toLowerCase(Locale.ROOT);
-        if (name.endsWith(".apk") || name.endsWith(".apks") || name.endsWith(".xapk")
-                || name.endsWith(".akp") || name.endsWith(".apkm")
-                || name.endsWith(".apkmx") || name.endsWith(".zip")) {
+        // 先剥掉 .1 / .bin 这类社交软件追加的后缀，xxx.apk.1 才能被识别成
+        // 安装包；不剥的话既不在白名单、也不在无关黑名单里，虽会默认放行，
+        // 但后续按显示名做类型判断时会走错分支。
+        String name = FileNames.normalize(rawDisplayName(u));
+        if (FileNames.isInstallable(name)) {
             return true;
         }
+        String low = name.toLowerCase(Locale.ROOT);
         String[] unrelated = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic",
                 ".txt", ".pdf", ".mp3", ".m4a", ".mp4", ".mkv", ".avi", ".mov",
                 ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm",
                 ".json", ".xml", ".log", ".vcf", ".ics", ".torrent"};
         for (String ext : unrelated) {
-            if (name.endsWith(ext)) {
+            if (low.endsWith(ext)) {
                 return false;
             }
         }

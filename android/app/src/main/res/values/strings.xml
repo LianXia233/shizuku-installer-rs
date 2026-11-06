@@ -9,7 +9,7 @@
 
     <string name="section_service">服务状态</string>
     <string name="section_install">安装</string>
-    <string name="section_install_hint">支持 APK / 多 split / APKS / XAPK / APKM / ZIP，后台静默完成</string>
+    <string name="section_install_hint">支持 APK / 多 split / APKS / XAPK / APKM / ZIP，含社交软件追加的 .apk.1 后缀，后台静默完成</string>
     <string name="section_manage">卸载与启动</string>
     <string name="section_quick">快捷入口</string>
     <string name="footer">Rust core · Shizuku API 13 · targetSdk 36</string>
@@ -36,11 +36,14 @@
     <string name="about_repo_url">https://github.com/LianXia233/shizuku-installer-rs</string>
     <string name="about_repo_hint">点击在浏览器中打开，可查看源码、提交记录与版本发布</string>
     <string name="about_dev_label">开发者</string>
-    <string name="about_dev_name">LianXia233 · 独立开发与维护</string>
-    <string name="about_license_label">开源许可</string>
-    <string name="about_license_desc">本项目以 GNU General Public License v3.0 发布。你可以自由使用、修改与再分发，但衍生作品须同样以 GPL-3.0 开源，并保留原作者署名与许可声明。完整条款见仓库根目录的 LICENSE 文件。</string>
-    <string name="about_deps">依赖与致谢：Rust 标准库与 serde；Shizuku API（RikkaApps，Apache-2.0）提供 shell 权限通道；Android SDK 与 Gradle 构建工具链。</string>
-    <string name="about_footer">Shizuku Installer · Rust core · GPL-3.0</string>
+    <string name="about_dev_name">LianXia233 · 开发与维护</string>
+    <string name="about_license_label">开源许可与致谢</string>
+    <string name="about_license_badge">GPL-3.0-only</string>
+    <string name="about_license_desc">本项目的全部源码以 GNU General Public License v3.0 授权发布。你可以自由地运行、研究、修改与再分发本软件；若分发修改版或衍生作品，必须以同一许可公开完整源码，并保留版权声明与许可文本。</string>
+    <string name="about_license_third_title">随应用使用的开源组件</string>
+    <string name="about_license_third_hint">下列组件按其自身许可条款使用；点击条目可打开上游仓库查看许可全文</string>
+    <string name="about_license_note">完整条款见仓库根目录 LICENSE 文件。各第三方组件的许可以其上游仓库声明为准；构建工具链仅在编译期使用，不随 APK 分发。</string>
+    <string name="about_footer">Shizuku Installer · Rust core · GPL-3.0-only</string>
 
     <string name="opt_confirm">安装前确认</string>
     <string name="opt_confirm_hint">默认关闭，直接静默执行</string>
@@ -77,7 +80,7 @@
 
     <!-- 静默安装授权 -->
     <string name="auth_card_title">授权与安装行为</string>
-    <string name="auth_card_desc">只有被允许的应用才能直接发起静默安装；首次调用会直接在当前应用上方弹出授权卡片，不必切回本应用。</string>
+    <string name="auth_card_desc">勾选后可直接静默安装 · 点击展开安装行为设置</string>
     <string name="opt_caller_auth">外部调用需授权</string>
     <string name="opt_caller_auth_hint">推荐开启 · 未授权来源首次调用会当场询问</string>
     <string name="opt_floating">安装进度悬浮指示器</string>
@@ -180,4 +183,16 @@
     <string name="notify_uninstall_fail">%1$s 卸载失败</string>
     <string name="notify_action_launch">启动</string>
     <string name="notify_action_logs">查看日志</string>
+
+    <!-- 跨应用授权：前台服务保活 + 悬浮卡片，兜底为可当场决策的横幅通知 -->
+    <string name="auth_channel">安装授权</string>
+    <string name="auth_channel_desc">其他应用发起静默安装时的授权提示</string>
+    <string name="auth_fg_title">等待安装授权</string>
+    <string name="auth_fg_text">请在浮于当前应用之上的卡片中选择允许或拒绝</string>
+    <string name="auth_heads_up_title">%1$s 请求静默安装</string>
+    <string name="auth_heads_up_text">无需切回本应用，直接在此选择；允许后会立即继续本次安装。</string>
+    <string name="auth_heads_up_allow">允许并继续</string>
+    <string name="auth_heads_up_deny">拒绝</string>
+    <string name="auth_heads_up_channel">安装授权（横幅）</string>
+    <string name="auth_heads_up_channel_desc">无法使用悬浮窗时，以横幅通知当场授权</string>
 </resources>
