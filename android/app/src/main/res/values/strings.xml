@@ -1,16 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">静默安装器</string>
+    <string name="app_tagline">Shizuku 授权 · Rust 核心</string>
+    <string name="header_subtitle">静默安装 · 无需确认 · 后台完成</string>
     <string name="settings_title">设置</string>
+    <string name="settings_subtitle">安装行为与包名白名单</string>
+
+    <string name="section_service">服务状态</string>
+    <string name="section_install">安装</string>
+    <string name="section_install_hint">支持 APK / 多 split / APKS / XAPK，后台静默完成</string>
+    <string name="section_manage">卸载与启动</string>
+    <string name="section_quick">快捷入口</string>
+    <string name="section_log">本次执行日志</string>
+    <string name="footer">Rust core · Shizuku API 13 · targetSdk 36</string>
 
     <string name="status_title">Shizuku 状态</string>
     <string name="status_checking">正在检查…</string>
+    <string name="status_badge_ready">已就绪</string>
+    <string name="status_badge_attention">需要处理</string>
     <string name="btn_check">刷新状态</string>
     <string name="btn_request">请求授权</string>
 
     <string name="btn_install">选择安装包并安装</string>
     <string name="btn_uninstall">卸载应用</string>
-    <string name="btn_settings">白名单与设置</string>
+    <string name="btn_settings">设置</string>
+    <string name="btn_logs">安装日志</string>
     <string name="btn_launch">启动应用</string>
     <string name="btn_copy_log">复制日志</string>
 
@@ -20,6 +34,32 @@
 
     <string name="log_title">执行日志</string>
     <string name="log_empty">尚无操作记录。</string>
+
+    <string name="logs_title">安装日志</string>
+    <string name="logs_subtitle">每一次静默安装与卸载都会自动记录</string>
+    <string name="logs_empty">还没有记录，先安装一个应用吧。</string>
+    <string name="logs_hint">记录仅保存在本机，可导出为文本</string>
+    <string name="logs_cleared">日志已清空</string>
+    <string name="logs_share_title">导出安装日志</string>
+    <string name="logs_share_failed">分享失败</string>
+    <string name="btn_log_clear">清空</string>
+    <string name="btn_log_share">导出</string>
+    <string name="log_op_install">安装</string>
+    <string name="log_op_uninstall">卸载</string>
+    <string name="log_source_silent">后台静默</string>
+    <string name="log_source_ui">应用内</string>
+    <string name="log_success">成功</string>
+    <string name="log_fail">失败</string>
+    <string name="log_unknown">未知记录</string>
+    <string name="log_error_code">错误码 %1$s</string>
+
+    <string name="allow_title">免确认包名白名单</string>
+    <string name="allow_hint">输入完整包名</string>
+    <string name="allow_add">添加</string>
+    <string name="allow_clear">清空白名单</string>
+    <string name="allow_empty">（空）</string>
+    <string name="allow_remove">移除</string>
+
     <string name="dialog_confirm_title">确认安装</string>
     <string name="dialog_confirm_btn">开始安装</string>
     <string name="dialog_cancel">取消</string>
@@ -47,4 +87,5 @@
     <string name="notify_uninstall_ok">%1$s 卸载完成</string>
     <string name="notify_uninstall_fail">%1$s 卸载失败</string>
     <string name="notify_action_launch">启动</string>
+    <string name="notify_action_logs">查看日志</string>
 </resources>

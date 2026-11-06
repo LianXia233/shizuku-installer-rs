@@ -45,6 +45,7 @@ public final class MainActivity extends Activity {
 
     private TextView tvStatusTitle;
     private TextView tvStatusHint;
+    private TextView tvStatusBadge;
     private TextView tvLog;
     private Button btnPermission;
     private Switch swConfirm;
@@ -70,6 +71,7 @@ public final class MainActivity extends Activity {
 
         tvStatusTitle = findViewById(R.id.tvStatusTitle);
         tvStatusHint = findViewById(R.id.tvStatusHint);
+        tvStatusBadge = findViewById(R.id.tvStatusBadge);
         tvLog = findViewById(R.id.tvLog);
         btnPermission = findViewById(R.id.btnPermission);
         swConfirm = findViewById(R.id.swConfirm);
@@ -92,6 +94,8 @@ public final class MainActivity extends Activity {
         findViewById(R.id.btnUninstall).setOnClickListener(v -> showUninstallDialog(null));
         findViewById(R.id.btnSettings).setOnClickListener(v ->
                 startActivity(new Intent(this, SettingsActivity.class)));
+        findViewById(R.id.btnLogs).setOnClickListener(v ->
+                startActivity(new Intent(this, LogActivity.class)));
         findViewById(R.id.btnLaunch).setOnClickListener(v -> launchLast());
         findViewById(R.id.btnCopy).setOnClickListener(v -> copyLog());
 
@@ -149,6 +153,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             currentState = d.optString("state", "UNAVAILABLE");
+            applyStatusBadge(currentState);
             JSONObject g = d.optJSONObject("guidance");
             tvStatusTitle.setText(g == null ? currentState : g.optString("title"));
             String hint = g == null ? "" : (g.optString("title") + " · " + g.optString("hint"));
@@ -163,6 +168,16 @@ public final class MainActivity extends Activity {
                 applyConfigToUi(cfg);
             }
         });
+    }
+
+    private void applyStatusBadge(String state) {
+        boolean ready = "AUTHORIZED".equals(state);
+        tvStatusBadge.setText(getString(ready
+                ? R.string.status_badge_ready : R.string.status_badge_attention));
+        tvStatusBadge.setTextColor(getResources().getColor(
+                ready ? R.color.success : R.color.warning, getTheme()));
+        tvStatusBadge.setBackgroundResource(ready
+                ? R.drawable.bg_badge_ok : R.drawable.bg_badge_warn);
     }
 
     private void applyConfigToUi(JSONObject cfg) {
@@ -306,6 +321,7 @@ public final class MainActivity extends Activity {
         try {
             a.put("plan", new JSONObject(pendingPlan));
             a.put("options", buildOptions(true));
+            a.put("context", new JSONObject().put("label", installLabel).put("source", "ui"));
         } catch (JSONException e) {
             log("提交参数失败: " + e);
             return;
@@ -337,16 +353,26 @@ public final class MainActivity extends Activity {
         final EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT);
         input.setHint(R.string.dialog_uninstall_hint);
+        input.setTextColor(getResources().getColor(R.color.text_primary, getTheme()));
+        input.setHintTextColor(getResources().getColor(R.color.text_muted, getTheme()));
+        input.setBackgroundResource(R.drawable.bg_input);
+        input.setPadding(24, 16, 24, 16);
         if (preset != null) {
             input.setText(preset);
         }
         final Switch keep = new Switch(this);
         keep.setText(R.string.dialog_keep_data);
+        keep.setTextSize(14);
+        keep.setTextColor(getResources().getColor(R.color.text_primary, getTheme()));
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
         box.setOrientation(android.widget.LinearLayout.VERTICAL);
-        box.setPadding(32, 16, 32, 16);
+        box.setPadding(48, 24, 48, 8);
         box.addView(input);
-        box.addView(keep);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = 20;
+        box.addView(keep, lp);
         new AlertDialog.Builder(this)
                 .setTitle(R.string.dialog_uninstall_title)
                 .setView(box)
@@ -365,6 +391,7 @@ public final class MainActivity extends Activity {
         try {
             a.put("package", pkg);
             a.put("options", new JSONObject().put("keepData", keepData));
+            a.put("context", new JSONObject().put("label", pkg).put("source", "ui"));
         } catch (JSONException e) {
             log("参数构造失败: " + e);
             return;

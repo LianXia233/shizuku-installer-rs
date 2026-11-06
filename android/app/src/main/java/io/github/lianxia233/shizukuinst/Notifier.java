@@ -149,6 +149,12 @@ final class Notifier {
                     PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         }
         b.setContentIntent(pi);
+        Intent logs = new Intent(c, LogActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent logsPi = PendingIntent.getActivity(c, 23, logs,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        b.addAction(R.drawable.ic_action_logs,
+                c.getString(R.string.notify_action_logs), logsPi);
         if (ok) {
             b.setTimeoutAfter(20_000);
         }

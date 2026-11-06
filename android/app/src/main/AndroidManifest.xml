@@ -47,6 +47,11 @@
             android:exported="false"
             android:label="@string/settings_title" />
 
+        <activity
+            android:name=".LogActivity"
+            android:exported="false"
+            android:label="@string/logs_title" />
+
         <!-- 外部安装/卸载意图由透明无界面入口接管，不拉起主界面 -->
         <activity
             android:name=".SilentInstallActivity"

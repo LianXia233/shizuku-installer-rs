@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""原创绘制应用图标与 UI 图标。
+"""从项目图标素材生成全套 Android 启动图标与 UI 矢量图标。
 
-设计概念：
-  三个授权节点 -> 向下箭头（安装）-> 开口托盘（落位）。
-  全部矢量路径与配色均为本实现原创。
+素材: icons/app_icon_source.png (1024x1024，圆角方形)
+输出:
+  mipmap-*/ic_launcher.png            方形圆角启动图标（旧版 / 非 adaptive）
+  mipmap-*/ic_launcher_round.png      圆形启动图标
+  mipmap-*/ic_launcher_backdrop.png   adaptive 背景层（渐变底 + 圆角图标）
+  mipmap-*/ic_launcher_foreground.png adaptive 前景层（透明）
+  mipmap-anydpi-v26/ic_launcher*.xml  adaptive icon 配置
+  drawable/ic_launcher_monochrome.xml 单色版（themed icon）
+  drawable/ic_action_*.xml            UI 矢量图标
+  values/ic_launcher_background.xml   图标背景色
 
-输出：
-  icons/*.svg                       可读矢量源
-  android/app/src/main/res/**/*      Android vector drawable + 各密度 PNG
-运行: python3 scripts/gen_icons.py
+运行: python3 scripts/gen_icons.py   （需要 Pillow）
 """
 from pathlib import Path
 from PIL import Image, ImageDraw
@@ -16,11 +20,12 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / "android/app/src/main/res"
 ICONS = ROOT / "icons"
-ICONS.mkdir(exist_ok=True)
+SRC = ICONS / "app_icon_source.png"
 
-BG = "#0E5C52"
-FG = "#FFFFFF"
-ACCENT = "#78E3C1"
+# 与素材主色一致的蓝紫渐变（adaptive 背景层四角补色用）
+GRAD_TOP = (24, 104, 252)
+GRAD_BOTTOM = (106, 62, 246)
+ICON_BG = "#2358F5"
 
 DENSITIES = {
     "mipmap-mdpi-v4": (48, 108),
@@ -30,140 +35,104 @@ DENSITIES = {
     "mipmap-xxxhdpi-v4": (192, 432),
 }
 
+if not SRC.exists():
+    raise SystemExit(f"缺少图标素材: {SRC}")
 
-def P(scale):
-    return lambda x, y: (int(round(x * scale)), int(round(y * scale)))
-
-
-def draw_glyph(d, scale, fg=FG, accent=ACCENT, stroke_scale=1.0):
-    p = P(scale)
-    to_rgb = lambda hx: tuple(int(hx[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
-    fg_c, ac_c = to_rgb(fg), to_rgb(accent)
-    w_arrow = max(1, int(round(6 * scale * stroke_scale)))
-    w_tray = max(1, int(round(5 * scale * stroke_scale)))
-    w_arc = max(1, int(round(2 * scale * stroke_scale)))
-
-    # --- 授权节点：三个圆点 + 一段上弧 ---
-    d.line([p(38, 24), p(46, 16), p(62, 16), p(70, 24)], fill=ac_c, width=w_arc, joint="curve")
-    for (x, y) in ((38, 24), (54, 15), (70, 24)):
-        cx, cy = p(x, y)
-        r = max(1, int(round(3.2 * scale)))
-        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=ac_c)
-
-    # --- 向下箭头 ---
-    d.line([p(54, 32), p(54, 60)], fill=fg_c, width=w_arrow)
-    d.line([p(40, 52), p(54, 66), p(68, 52)], fill=fg_c, width=w_arrow, joint="curve")
-    for (x, y) in ((54, 32), (40, 52), (68, 52)):
-        cx, cy = p(x, y)
-        r = w_arrow / 2
-        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fg_c)
-
-    # --- 开口托盘 ---
-    tray = [p(28, 68), p(28, 76), p(30, 79), p(34, 81), p(74, 81), p(78, 79), p(80, 76), p(80, 68)]
-    d.line(tray, fill=fg_c, width=w_tray, joint="curve")
-    for pt in (tray[0], tray[-1]):
-        r = w_tray / 2
-        d.ellipse((pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r), fill=fg_c)
+SOURCE = Image.open(SRC).convert("RGBA")
 
 
-def make_png(size, *, background=None, round_mask=False, foreground_only=False, monochrome=False):
-    scale = size / 108.0
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    if background:
-        d0 = ImageDraw.Draw(img)
-        d0.rectangle((0, 0, size, size), fill=background)
+def _supersample() -> int:
+    return 4
+
+
+def rounded_mask(size: int, ratio: float = 0.215) -> Image.Image:
+    ss = _supersample()
+    m = Image.new("L", (size * ss, size * ss), 0)
+    d = ImageDraw.Draw(m)
+    r = int(size * ss * ratio)
+    d.rounded_rectangle((0, 0, size * ss - 1, size * ss - 1), radius=r, fill=255)
+    return m.resize((size, size), Image.LANCZOS)
+
+
+def circle_mask(size: int) -> Image.Image:
+    ss = _supersample()
+    m = Image.new("L", (size * ss, size * ss), 0)
+    ImageDraw.Draw(m).ellipse((0, 0, size * ss - 1, size * ss - 1), fill=255)
+    return m.resize((size, size), Image.LANCZOS)
+
+
+def gradient(size: int) -> Image.Image:
+    img = Image.new("RGBA", (size, size))
     d = ImageDraw.Draw(img)
-    draw_glyph(d, scale, fg="#FFFFFF" if monochrome else FG,
-               accent="#FFFFFF" if monochrome else ACCENT)
-    if round_mask:
-        mask = Image.new("L", (size * 4, size * 4), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, size * 4, size * 4), fill=255)
-        mask = mask.resize((size, size), Image.LANCZOS)
-        img.putalpha(mask)
+    for y in range(size):
+        t = y / max(1, size - 1)
+        c = tuple(int(GRAD_TOP[i] + (GRAD_BOTTOM[i] - GRAD_TOP[i]) * t) for i in range(3))
+        d.line([(0, y), (size, y)], fill=c + (255,))
     return img
 
 
-# ---------------------------------------------------------------- SVG 源
-def svg(color_fg=FG, color_accent=ACCENT, with_bg=True):
-    bg = f'<rect width="108" height="108" fill="{BG}"/>' if with_bg else ""
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
-  <title>Shizuku Installer - original icon</title>
-  {bg}
-  <g fill="none" stroke="{color_accent}" stroke-width="2" stroke-linecap="round">
-    <path d="M38,24 Q54,8 70,24"/>
-  </g>
-  <g fill="{color_accent}">
-    <circle cx="38" cy="24" r="3.2"/><circle cx="54" cy="15" r="3.2"/><circle cx="70" cy="24" r="3.2"/>
-  </g>
-  <g fill="none" stroke="{color_fg}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M54,32 L54,60"/>
-    <path d="M40,52 L54,66 L68,52"/>
-  </g>
-  <path d="M28,68 L28,76 Q28,82 34,82 L74,82 Q80,82 80,76 L80,68"
-        fill="none" stroke="{color_fg}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-'''
+def rounded_source(size: int) -> Image.Image:
+    """素材缩放到目标尺寸，四角按圆角裁成透明。"""
+    im = SOURCE.resize((size, size), Image.LANCZOS)
+    im.putalpha(rounded_mask(size))
+    return im
 
 
-(ICONS / "icon_source.svg").write_text(svg(), encoding="utf-8")
-(ICONS / "adaptive_foreground.svg").write_text(svg(with_bg=False), encoding="utf-8")
-(ICONS / "adaptive_monochrome.svg").write_text(
-    svg(color_fg="#FFFFFF", color_accent="#FFFFFF", with_bg=False), encoding="utf-8")
+def legacy_icon(size: int) -> Image.Image:
+    return rounded_source(size)
 
-# ---------------------------------------------------------------- vector drawables
-def vector_xml(monochrome=False):
-    fg = "#FFFFFF" if monochrome else FG
-    ac = "#FFFFFF" if monochrome else ACCENT
-    return f'''<?xml version="1.0" encoding="utf-8"?>
+
+def round_icon(size: int) -> Image.Image:
+    im = SOURCE.resize((size, size), Image.LANCZOS)
+    im.putalpha(circle_mask(size))
+    return im
+
+
+def backdrop(size: int) -> Image.Image:
+    """adaptive 背景层：渐变铺满，四角不透明，圆角图标居中贴合。"""
+    base = gradient(size)
+    base.alpha_composite(rounded_source(size))
+    return base
+
+
+def foreground(size: int) -> Image.Image:
+    """adaptive 前景层保持全透明，避免与背景层的完整图标重叠。"""
+    return Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
+
+# ------------------------------------------------------------------ 单色矢量
+MONOCHROME = '''<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:pathData="M38,24 Q54,8 70,24" android:strokeColor="{ac}"
-        android:strokeWidth="2" android:strokeLineCap="round" android:fillColor="#00000000"/>
-    <path android:pathData="M38,24 m-3.2,0 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0 M54,15 m-3.2,0 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0 M70,24 m-3.2,0 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0"
-        android:fillColor="{ac}"/>
-    <path android:pathData="M54,32 L54,60 M40,52 L54,66 L68,52"
-        android:strokeColor="{fg}" android:strokeWidth="6" android:strokeLineCap="round"
-        android:strokeLineJoin="round" android:fillColor="#00000000"/>
-    <path android:pathData="M28,68 L28,76 Q28,82 34,82 L74,82 Q80,82 80,76 L80,68"
-        android:strokeColor="{fg}" android:strokeWidth="5" android:strokeLineCap="round"
-        android:strokeLineJoin="round" android:fillColor="#00000000"/>
+    <!-- APK 文档轮廓 -->
+    <path android:pathData="M34,26 L62,26 L76,40 L76,82 L34,82 Z M62,26 L62,40 L76,40"
+        android:strokeColor="#FFFFFF" android:strokeWidth="4"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <!-- 文档内的标识条 -->
+    <path android:pathData="M40,52 L70,52" android:strokeColor="#FFFFFF"
+        android:strokeWidth="5" android:strokeLineCap="round" android:fillColor="#00000000"/>
+    <path android:pathData="M40,64 L58,64" android:strokeColor="#FFFFFF"
+        android:strokeWidth="4" android:strokeLineCap="round" android:fillColor="#00000000"/>
+    <!-- 静默落位箭头 -->
+    <path android:pathData="M88,30 L88,52 M79,44 L88,53 L97,44"
+        android:strokeColor="#FFFFFF" android:strokeWidth="4"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
 </vector>
 '''
 
-
-(RES / "drawable/ic_launcher_foreground.xml").write_text(vector_xml(False), encoding="utf-8")
-(RES / "drawable/ic_launcher_monochrome.xml").write_text(vector_xml(True), encoding="utf-8")
-
-(RES / "values/ic_launcher_background.xml").write_text(
-    '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
-    f'    <color name="ic_launcher_background">{BG}</color>\n'
-    '    <color name="brand_primary">#0E5C52</color>\n'
-    '    <color name="brand_accent">#78E3C1</color>\n'
-    '</resources>\n', encoding="utf-8")
-
-adaptive = '''<?xml version="1.0" encoding="utf-8"?>
+ADAPTIVE = '''<?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background"/>
-    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+    <background android:drawable="@mipmap/ic_launcher_backdrop"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
     <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
 </adaptive-icon>
 '''
-(RES / "mipmap-anydpi-v26/ic_launcher.xml").write_text(adaptive, encoding="utf-8")
-(RES / "mipmap-anydpi-v26/ic_launcher_round.xml").write_text(adaptive, encoding="utf-8")
 
-# ---------------------------------------------------------------- PNG（各密度）
-for folder, (legacy, fore) in DENSITIES.items():
-    out = RES / folder
-    out.mkdir(parents=True, exist_ok=True)
-    bg_rgba = tuple(int(BG[i:i + 2], 16) for i in (1, 3, 5)) + (255,)
-    make_png(legacy, background=bg_rgba).save(out / "ic_launcher.png")
-    make_png(legacy, background=bg_rgba, round_mask=True).save(out / "ic_launcher_round.png")
-    make_png(fore, foreground_only=True).save(out / "ic_launcher_foreground.png")
-
-# ---------------------------------------------------------------- 通知 / UI 图标
+# ------------------------------------------------------------------ UI 矢量图标
 UI_ICONS = {
-    # 24dp viewport，全部为原创路径
     "ic_action_install": 'M12,3 L12,14 M7,10 L12,15 L17,10 M4,18 L4,20 L20,20 L20,18',
     "ic_action_uninstall": 'M5,7 L19,7 M9,7 L9,5 L15,5 L15,7 M7,7 L8,20 L16,20 L17,7 M10,10 L10,17 M14,10 L14,17',
     "ic_action_shizuku": 'M12,3 L20,7 L20,13 Q20,18 12,21 Q4,18 4,13 L4,7 Z M9,12 L11,14 L15,10',
@@ -172,11 +141,44 @@ UI_ICONS = {
     "ic_action_launch": 'M5,5 L19,5 L19,19 L5,19 Z M9,15 L15,9 M11,9 L15,9 L15,13',
     "ic_action_copy": 'M8,8 L20,8 L20,20 L8,20 Z M16,8 L16,4 L4,4 L4,16 L8,16',
     "ic_action_notification": 'M12,3 L12,14 M7,10 L12,15 L17,10 M4,18 L4,20 L20,20 L20,18',
+    "ic_action_logs": 'M5,4 L19,4 L19,20 L5,20 Z M8,8 L16,8 M8,12 L16,12 M8,16 L13,16',
+    "ic_action_trash": 'M5,7 L19,7 M9,7 L9,5 L15,5 L15,7 M7,7 L8,20 L16,20 L17,7 M10,10 L10,17 M14,10 L14,17',
+    "ic_action_share": 'M12,3 L12,15 M8,7 L12,3 L16,7 M5,13 L5,20 L19,20 L19,13',
+    "ic_action_bolt": 'M13,2 L6,12 L11,12 L10,22 L18,10 L13,10 Z',
+    "ic_action_shield": 'M12,3 L20,6 L20,12 Q20,17 12,21 Q4,17 4,12 L4,6 Z M9,12 L11,14 L16,9',
+    "ic_action_apk": 'M7,3 L14,3 L18,7 L18,21 L7,21 Z M14,3 L14,7 L18,7 M10,12 L15,12 M10,16 L15,16',
+    "ic_action_back": 'M15,5 L8,12 L15,19',
+    "ic_action_refresh": 'M19,7 A8,8 0 1,0 20,13 M19,3 L19,8 L14,8',
 }
+
+
+def write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
+# ------------------------------------------------------------------ 输出
+(RES / "drawable").mkdir(parents=True, exist_ok=True)
+write(RES / "drawable/ic_launcher_monochrome.xml", MONOCHROME)
+write(RES / "mipmap-anydpi-v26/ic_launcher.xml", ADAPTIVE)
+write(RES / "mipmap-anydpi-v26/ic_launcher_round.xml", ADAPTIVE)
+write(RES / "values/ic_launcher_background.xml",
+      '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+      f'    <color name="ic_launcher_background">{ICON_BG}</color>\n'
+      '</resources>\n')
+
+for folder, (legacy, large) in DENSITIES.items():
+    out = RES / folder
+    out.mkdir(parents=True, exist_ok=True)
+    legacy_icon(legacy).save(out / "ic_launcher.png")
+    round_icon(legacy).save(out / "ic_launcher_round.png")
+    foreground(large).save(out / "ic_launcher_foreground.png")
+    backdrop(large).save(out / "ic_launcher_backdrop.png")
+
 for name, path in UI_ICONS.items():
-    stroke = "2" if name != "ic_action_shizuku" else "1.8"
-    (RES / f"drawable/{name}.xml").write_text(
-        f'''<?xml version="1.0" encoding="utf-8"?>
+    stroke = "1.8" if name in ("ic_action_shizuku", "ic_action_shield") else "2"
+    write(RES / f"drawable/{name}.xml",
+          f'''<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24"
@@ -185,7 +187,8 @@ for name, path in UI_ICONS.items():
         android:strokeWidth="{stroke}" android:strokeLineCap="round"
         android:strokeLineJoin="round" android:fillColor="#00000000"/>
 </vector>
-''', encoding="utf-8")
+''')
 
-print("generated:", len(list(RES.rglob("*.png"))), "png +",
-      len(list(RES.rglob("*.xml"))), "xml")
+print("icon source :", SRC.relative_to(ROOT))
+print("png files   :", len(list(RES.rglob("*.png"))))
+print("ui vectors  :", len(UI_ICONS))

@@ -30,8 +30,8 @@ import rikka.shizuku.Shizuku;
 /**
  * 无业务逻辑的 I/O 胶水层。Rust 核心通过 JNI 以 JSON 调用这里的方法。
  *
- * 这里只做四件事：读取 Shizuku 状态、以 shell 身份执行命令、
- * 通过 ContentResolver 搬运字节、持久化配置。任何「该做什么」的判断都在 Rust 侧。
+ * 这里只做 I/O：读取 Shizuku 状态、以 shell 身份执行命令、搬运字节、
+ * 持久化配置与安装日志。任何「该做什么」的判断都在 Rust 侧。
  */
 public final class ShizukuBridge {
     private static final String TAG = "ShizukuBridge";
@@ -85,6 +85,16 @@ public final class ShizukuBridge {
                     }
                     return "{}";
                 }
+                case "now":
+                    return new JSONObject().put("millis", System.currentTimeMillis()).toString();
+                case "logAppend":
+                    return InstallLogStore.append(App.context(), a).toString();
+                case "logList":
+                    return new JSONObject()
+                            .put("entries", InstallLogStore.list(App.context(), a.optInt("limit", 200)))
+                            .toString();
+                case "logClear":
+                    return InstallLogStore.clear(App.context()).toString();
                 default:
                     return error("unknown method: " + method);
             }

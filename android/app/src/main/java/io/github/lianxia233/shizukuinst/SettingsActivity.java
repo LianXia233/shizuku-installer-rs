@@ -2,6 +2,7 @@ package io.github.lianxia233.shizukuinst;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -85,18 +86,18 @@ public final class SettingsActivity extends Activity {
         list.removeAllViews();
         if (al.length() == 0) {
             TextView empty = new TextView(this);
-            empty.setText("(空)");
-            empty.setPadding(8, 8, 8, 8);
+            empty.setText(R.string.allow_empty);
+            empty.setTextSize(13);
+            empty.setTextColor(getResources().getColor(R.color.text_muted, getTheme()));
+            empty.setPadding(8, 16, 8, 16);
             list.addView(empty);
             return;
         }
         for (int i = 0; i < al.length(); i++) {
             final String pkg = al.optString(i);
-            TextView row = new TextView(this);
-            row.setText(pkg + "   ✕");
-            row.setTextSize(15);
-            row.setPadding(8, 12, 8, 12);
-            row.setOnClickListener(v -> {
+            View row = getLayoutInflater().inflate(R.layout.item_allow, list, false);
+            ((TextView) row.findViewById(R.id.itemAllowName)).setText(pkg);
+            row.findViewById(R.id.itemAllowRemove).setOnClickListener(v -> {
                 try {
                     call("allowListRemove", new JSONObject().put("package", pkg));
                 } catch (JSONException ignored) {

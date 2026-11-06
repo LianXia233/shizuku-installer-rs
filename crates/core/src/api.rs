@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use crate::config;
 use crate::error::{CoreError, Result};
 use crate::install;
+use crate::logbook::{self, OpContext};
 use crate::model::{Config, InstallOptions, InstallPlan, UninstallOptions};
 use crate::platform::{self, PlatformBridge};
 use crate::state;
@@ -16,16 +17,7 @@ pub struct Core<B: PlatformBridge> {
 }
 
 fn error_kind(e: &CoreError) -> &'static str {
-    match e {
-        CoreError::ShizukuNotReady(_) => "SHIZUKU_NOT_READY",
-        CoreError::Bridge(_) => "BRIDGE",
-        CoreError::Session(_) => "SESSION",
-        CoreError::Write(_) => "WRITE",
-        CoreError::Archive(_) => "ARCHIVE",
-        CoreError::InvalidArgument(_) => "INVALID_ARGUMENT",
-        CoreError::Rejected(_) => "REJECTED",
-        CoreError::Json(_) => "JSON",
-    }
+    e.kind()
 }
 
 fn opt<T: DeserializeOwned + Default>(a: &Value, key: &str) -> T {
@@ -125,20 +117,43 @@ impl<B: PlatformBridge> Core<B> {
                 let p: InstallPlan = serde_json::from_value(
                     a.get("plan").cloned().ok_or_else(|| CoreError::InvalidArgument("缺少 plan".into()))?,
                 )?;
-                let out = install::execute(&self.bridge, &p, &opt::<InstallOptions>(a, "options"))?;
+                let ctx = OpContext::from_json(a);
+                let out = install::execute_with_context(
+                    &self.bridge, &p, &opt::<InstallOptions>(a, "options"), &ctx,
+                )?;
                 Ok(json!({ "result": out }))
             }
             "uninstall" => {
-                let out = uninstall::uninstall(
+                let ctx = OpContext::from_json(a);
+                let out = uninstall::uninstall_with_context(
                     &self.bridge,
                     a["package"].as_str().unwrap_or(""),
                     &opt::<UninstallOptions>(a, "options"),
+                    &ctx,
                 )?;
                 Ok(json!({ "result": out }))
             }
             "launch" => {
                 let out = uninstall::launch(&self.bridge, a["package"].as_str().unwrap_or(""))?;
                 Ok(json!({ "result": out }))
+            }
+            "logList" => {
+                let limit = a["limit"].as_u64().unwrap_or(logbook::DEFAULT_LIST_LIMIT as u64) as usize;
+                let entries = logbook::list(&self.bridge, limit)?;
+                Ok(json!({ "entries": entries, "text": logbook::export_text(&entries) }))
+            }
+            "logExport" => {
+                let entries = logbook::list(&self.bridge, 1000)?;
+                Ok(json!({ "text": logbook::export_text(&entries) }))
+            }
+            "logClear" => {
+                logbook::clear(&self.bridge)?;
+                Ok(json!({ "cleared": true }))
+            }
+            // 补记核心未覆盖的事件（例如准备阶段失败），格式与核心日志一致。
+            "logRecord" => {
+                logbook::append(&self.bridge, &crate::logbook::LogEntry::from_json(a));
+                Ok(json!({ "recorded": true }))
             }
             other => Err(CoreError::InvalidArgument(format!("未知方法: {other}"))),
         }
@@ -169,6 +184,30 @@ mod tests {
         let r: Value = serde_json::from_str(&c.dispatch("status", "{}")).unwrap();
         assert_eq!(r["data"]["state"], "UNAVAILABLE");
         assert_ne!(r["data"]["guidance"]["action"], "");
+    }
+
+    #[test]
+    fn log_list_export_and_manual_record() {
+        let b = MockBridge::new();
+        b.push("logList", json!({"entries":[
+            {"time":"2026-11-06 11:52:33","op":"install","label":"a.apk","ok":true,"source":"silent"}
+        ]}));
+        let c = Core::new(b);
+        let r: Value = serde_json::from_str(&c.dispatch("logList", "{}")).unwrap();
+        assert_eq!(r["ok"], true);
+        assert_eq!(r["data"]["entries"].as_array().unwrap().len(), 1);
+        assert!(r["data"]["text"].as_str().unwrap().contains("a.apk"));
+
+        let r2: Value = serde_json::from_str(&c.dispatch(
+            "logRecord",
+            r#"{"label":"b.apk","source":"silent","code":"SESSION","detail":"boom"}"#,
+        )).unwrap();
+        assert_eq!(r2["ok"], true);
+        let (_, rec) = c.bridge().calls().into_iter()
+            .find(|(m, _)| m == "logAppend").unwrap();
+        assert_eq!(rec["source"], "silent");
+        assert_eq!(rec["code"], "SESSION");
+        assert_eq!(rec["label"], "b.apk");
     }
 
     #[test]

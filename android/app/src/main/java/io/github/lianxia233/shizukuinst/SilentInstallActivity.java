@@ -127,7 +127,8 @@ public final class SilentInstallActivity extends Activity {
                 return;
             }
             String pkg = summary == null ? "" : summary.optString("package", "");
-            JSONObject commit = new JSONObject().put("plan", plan).put("options", opts);
+            JSONObject commit = new JSONObject().put("plan", plan).put("options", opts)
+                    .put("context", new JSONObject().put("label", label).put("source", "silent"));
             JSONObject cr = call("commitInstall", commit.toString());
             if (!cr.optBoolean("ok")) {
                 complete(false, errorText(cr), "");
@@ -150,7 +151,8 @@ public final class SilentInstallActivity extends Activity {
         try {
             JSONObject a = new JSONObject()
                     .put("package", pkg)
-                    .put("options", new JSONObject().put("keepData", false));
+                    .put("options", new JSONObject().put("keepData", false))
+                    .put("context", new JSONObject().put("label", pkg).put("source", "silent"));
             JSONObject r = call("uninstall", a.toString());
             if (!r.optBoolean("ok")) {
                 complete(false, errorText(r), "");
@@ -213,6 +215,18 @@ public final class SilentInstallActivity extends Activity {
     }
 
     private void fail(String msg) {
+        // 准备阶段失败未进入核心执行，补记一条，保证后台链路任何结果都留有记录。
+        try {
+            JSONObject record = new JSONObject()
+                    .put("op", uninstall ? "uninstall" : "install")
+                    .put("label", label)
+                    .put("source", "silent")
+                    .put("ok", false)
+                    .put("code", "PREPARE_FAILED")
+                    .put("detail", msg);
+            call("logRecord", record.toString());
+        } catch (Throwable ignored) {
+        }
         complete(false, msg, "");
     }
 

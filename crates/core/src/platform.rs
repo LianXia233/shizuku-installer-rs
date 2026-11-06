@@ -126,3 +126,11 @@ pub fn config_save(b: &dyn PlatformBridge, cfg: &crate::model::Config) -> Result
 pub fn publish_progress(b: &dyn PlatformBridge, stage: &str, index: usize, total: usize) {
     let _ = b.call("progress", &json!({ "stage": stage, "index": index, "total": total }));
 }
+
+/// 平台侧墙钟时间（毫秒），用于记录操作耗时。不可用时返回 0，不影响业务逻辑。
+pub fn now_millis(b: &dyn PlatformBridge) -> u64 {
+    b.call("now", &json!({}))
+        .ok()
+        .and_then(|v| v.get("millis").and_then(Value::as_u64))
+        .unwrap_or(0)
+}

@@ -27,6 +27,22 @@ pub enum CoreError {
     Json(String),
 }
 
+impl CoreError {
+    /// 稳定的机器可读错误码，用于日志与 JSON 门面。
+    pub fn kind(&self) -> &'static str {
+        match self {
+            CoreError::ShizukuNotReady(_) => "SHIZUKU_NOT_READY",
+            CoreError::Bridge(_) => "BRIDGE",
+            CoreError::Session(_) => "SESSION",
+            CoreError::Write(_) => "WRITE",
+            CoreError::Archive(_) => "ARCHIVE",
+            CoreError::InvalidArgument(_) => "INVALID_ARGUMENT",
+            CoreError::Rejected(_) => "REJECTED",
+            CoreError::Json(_) => "JSON",
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, CoreError>;
 
 impl From<serde_json::Error> for CoreError {

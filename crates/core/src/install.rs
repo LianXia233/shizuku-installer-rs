@@ -5,6 +5,7 @@ use crate::apk_meta;
 use crate::archive;
 use crate::config;
 use crate::error::{CoreError, Result};
+use crate::logbook::{self, LogEntry, OpContext};
 use crate::model::{Config, InstallOptions, InstallPlan, OpOutcome, Progress, SplitPart};
 use crate::parse;
 use crate::plan;
@@ -109,7 +110,53 @@ pub fn prepare(
 }
 
 /// F-02 执行阶段：会话式安装，字节流不落盘。
+///
+/// 该入口在成功与失败两条路径上都会写一条结构化日志，
+/// 因此后台静默入口与应用内入口共用同一份记录，不会漏记。
 pub fn execute(
+    b: &dyn PlatformBridge,
+    plan_data: &InstallPlan,
+    opts: &InstallOptions,
+) -> Result<InstallOutcome> {
+    execute_with_context(b, plan_data, opts, &OpContext::default())
+}
+
+pub fn execute_with_context(
+    b: &dyn PlatformBridge,
+    plan_data: &InstallPlan,
+    opts: &InstallOptions,
+    ctx: &OpContext,
+) -> Result<InstallOutcome> {
+    let started = platform::now_millis(b);
+    let result = execute_inner(b, plan_data, opts);
+    let duration_ms = platform::now_millis(b).saturating_sub(started);
+
+    let mut entry = LogEntry::new("install", ctx);
+    entry.package = plan_data.package_hint.clone();
+    entry.version = plan_data.version_hint.clone();
+    entry.parts = plan_data.parts.len();
+    entry.total_size = plan_data.total_size;
+    entry.duration_ms = duration_ms;
+    match &result {
+        Ok(out) => {
+            entry.ok = out.outcome.ok;
+            entry.code = out.outcome.code.clone();
+            entry.detail = logbook::truncate(&out.outcome.raw, logbook::DETAIL_LIMIT);
+            entry.stages = out.stages.iter().map(|s| s.stage.clone()).collect();
+            entry.session_id = out.session_id;
+        }
+        Err(e) => {
+            entry.ok = false;
+            entry.code = e.kind().to_string();
+            entry.detail = logbook::truncate(&e.to_string(), logbook::DETAIL_LIMIT);
+        }
+    }
+    // 日志是旁路：持久化失败不影响安装结果。
+    logbook::append(b, &entry);
+    result
+}
+
+fn execute_inner(
     b: &dyn PlatformBridge,
     plan_data: &InstallPlan,
     opts: &InstallOptions,
@@ -266,6 +313,55 @@ mod tests {
         assert!(execs[0].1["argv"].as_array().unwrap()[1].as_str() == Some("install-create"));
         assert!(execs[1].1["argv"].as_array().unwrap().last().unwrap().as_str() == Some("-"));
         assert!(execs[2].1["argv"].as_array().unwrap()[1].as_str() == Some("install-commit"));
+    }
+
+    fn sample_plan() -> InstallPlan {
+        InstallPlan {
+            parts: vec![SplitPart {
+                name: "base.apk".into(), size: 10,
+                stdin: StdinSource::Uri { uri: "content://a".into() },
+            }],
+            total_size: 10,
+            create_args: plan::install_create_args(&InstallOptions::default(), 10),
+            package_hint: Some("dev.example.app".into()),
+            version_hint: Some("1.0".into()),
+            requires_confirmation: false,
+        }
+    }
+
+    #[test]
+    fn execute_logs_success_with_silent_context() {
+        let b = MockBridge::new();
+        for _ in 0..2 { authorized(&b); }
+        b.push("exec", json!({"code":0,"stdout":"Success: created install session [777]","stderr":""}));
+        b.push("exec", json!({"code":0,"stdout":"Success: streamed 10 bytes","stderr":""}));
+        b.push("exec", json!({"code":0,"stdout":"Success","stderr":""}));
+        let ctx = OpContext { label: "demo.apk".into(), source: "silent".into() };
+        let out = execute_with_context(&b, &sample_plan(), &InstallOptions::default(), &ctx).unwrap();
+        assert!(out.outcome.ok);
+        let (_, a) = b.calls().into_iter().find(|(m, _)| m == "logAppend").unwrap();
+        assert_eq!(a["op"], "install");
+        assert_eq!(a["ok"], true);
+        assert_eq!(a["code"], "SUCCESS");
+        assert_eq!(a["label"], "demo.apk");
+        assert_eq!(a["source"], "silent");
+        assert_eq!(a["package"], "dev.example.app");
+        assert_eq!(a["sessionId"], 777);
+    }
+
+    #[test]
+    fn execute_logs_failure_when_not_authorized() {
+        let b = MockBridge::new();
+        b.push("shizukuState", json!({"available":false,"permission":0}));
+        for _ in 0..2 { authorized(&b); }
+        let ctx = OpContext { label: "bg.apk".into(), source: "silent".into() };
+        let r = execute_with_context(&b, &sample_plan(), &InstallOptions::default(), &ctx);
+        assert!(r.is_err());
+        let (_, a) = b.calls().into_iter().find(|(m, _)| m == "logAppend").unwrap();
+        assert_eq!(a["ok"], false);
+        assert_eq!(a["code"], "SHIZUKU_NOT_READY");
+        assert_eq!(a["source"], "silent");
+        assert!(!a["detail"].as_str().unwrap().is_empty());
     }
 
     #[test]

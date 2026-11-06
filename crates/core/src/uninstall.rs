@@ -1,13 +1,54 @@
 use crate::error::{CoreError, Result};
 use crate::install::require_authorization;
+use crate::logbook::{self, LogEntry, OpContext};
 use crate::model::{OpOutcome, UninstallOptions};
 use crate::parse;
 use crate::plan;
 use crate::platform::{self, PlatformBridge, StdinSource};
 use crate::util::is_valid_package_name;
 
-/// F-03 静默卸载。
+/// F-03 静默卸载；成功与失败都会写入日志。
 pub fn uninstall(
+    b: &dyn PlatformBridge,
+    package: &str,
+    opts: &UninstallOptions,
+) -> Result<OpOutcome> {
+    uninstall_with_context(b, package, opts, &OpContext::default())
+}
+
+pub fn uninstall_with_context(
+    b: &dyn PlatformBridge,
+    package: &str,
+    opts: &UninstallOptions,
+    ctx: &OpContext,
+) -> Result<OpOutcome> {
+    let started = crate::platform::now_millis(b);
+    let result = uninstall_inner(b, package, opts);
+    let duration_ms = crate::platform::now_millis(b).saturating_sub(started);
+
+    let mut entry = LogEntry::new("uninstall", ctx);
+    if entry.label == "安装包" {
+        entry.label = package.trim().to_string();
+    }
+    entry.package = Some(package.trim().to_string());
+    entry.duration_ms = duration_ms;
+    match &result {
+        Ok(o) => {
+            entry.ok = o.ok;
+            entry.code = o.code.clone();
+            entry.detail = logbook::truncate(&o.raw, logbook::DETAIL_LIMIT);
+        }
+        Err(e) => {
+            entry.ok = false;
+            entry.code = e.kind().to_string();
+            entry.detail = logbook::truncate(&e.to_string(), logbook::DETAIL_LIMIT);
+        }
+    }
+    logbook::append(b, &entry);
+    result
+}
+
+fn uninstall_inner(
     b: &dyn PlatformBridge,
     package: &str,
     opts: &UninstallOptions,
@@ -75,6 +116,22 @@ mod tests {
         assert!(o.ok);
         let (_m, a) = &b.calls().into_iter().find(|(m, _)| m == "exec").unwrap();
         assert_eq!(a["argv"].as_array().unwrap().last().unwrap(), "dev.example.app");
+    }
+
+    #[test]
+    fn uninstall_writes_log_entry() {
+        let b = MockBridge::new();
+        authorized(&b);
+        b.push("exec", json!({"code":0,"stdout":"Success","stderr":""}));
+        let ctx = OpContext { label: "dev.example.app".into(), source: "silent".into() };
+        let o = uninstall_with_context(&b, "dev.example.app", &UninstallOptions::default(), &ctx)
+            .unwrap();
+        assert!(o.ok);
+        let (_, a) = b.calls().into_iter().find(|(m, _)| m == "logAppend").unwrap();
+        assert_eq!(a["op"], "uninstall");
+        assert_eq!(a["ok"], true);
+        assert_eq!(a["source"], "silent");
+        assert_eq!(a["package"], "dev.example.app");
     }
 
     #[test]

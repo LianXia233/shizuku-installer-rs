@@ -9,6 +9,7 @@ pub mod archive;
 pub mod config;
 pub mod error;
 pub mod install;
+pub mod logbook;
 pub mod mock;
 pub mod model;
 pub mod parse;
