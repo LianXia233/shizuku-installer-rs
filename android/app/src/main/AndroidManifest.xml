@@ -61,29 +61,28 @@
             android:label="@string/logs_title" />
 
         <!--
-          外部安装/卸载意图的无窗口入口。
+          外部安装/卸载意图的入口。
 
-          直接使用框架 android:style/Theme.NoDisplay：它的 windowNoDisplay=true
-          会让 ActivityThread 在 handleResumeActivity 时跳过 wm.addView，从源头
-          不创建任何窗口。绝不在自定义主题里覆盖 windowIsFloating /
-          windowIsTranslucent，也绝不在代码里调用任何 Window API：
-          setFlags 清除 FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS 会在 ROM 真的建窗口时
-          把状态栏/导航栏染黑，setAttributes 等还会 installDecor 激活窗口。
+          使用 @style/SilentEntryTheme（1x1 透明、不聚焦、不可触摸窗口）：
+          普通调用仍在 onCreate 内立即 finish，framework 因 mFinished=true
+          跳过 wm.addView，实际零窗口；等待结果的调用方则驻留约 1400ms，
+          把 onActivityResult 推过调用方在 MIUI 上 1 秒的结果忽略窗口，
+          使其走 checkInstallationResult + finish 的正常分支，
+          不再留下永久停留的透明中转 Activity。
 
-          刻意不声明 android:noHistory：调用方普遍用 startActivityForResult
-          拉起本入口（logcat 中可见 (rr=<ActivityRecord>)），需要一个正常的
-          ActivityRecord 来承载并回传结果；入口已在 onCreate 内自行 finish，
+          之所以不能继续用 Theme.NoDisplay：该主题要求 onResume 前 finish，
+          无法驻留到 1 秒之后。窗口属性由 SilentInstallActivity.configureWindow()
+          在 onCreate / onResume / addView 后三次申明，防止 ROM 重算覆盖。
+
+          刻意不声明 android:noHistory：需要正常的 ActivityRecord 承载并回传结果；
           配合 excludeFromRecents / autoRemoveFromRecents 不会留在最近任务。
-          若调用方是等待 RESULT_OK 的透明中转 Activity，不回传结果就会让它
-          永久停在栈顶，形成「透明遮罩 + 黑系统栏 + 触摸失效」。
-
-          intent-filter 只匹配 APK 相关 MIME，不使用 */* ，避免把任意
-          content:// 意图都抢过来。
+          intent-filter 只匹配 APK 相关 MIME，不使用 */* ，避免抢走任意
+          content:// 意图。
         -->
         <activity
             android:name=".SilentInstallActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.NoDisplay"
+            android:theme="@style/SilentEntryTheme"
             android:excludeFromRecents="true"
             android:autoRemoveFromRecents="true"
             android:taskAffinity=""

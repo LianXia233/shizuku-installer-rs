@@ -15,7 +15,7 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 ```
 ┌──────────────────────────── Android App ────────────────────────────┐
 │  MainActivity / SettingsActivity / LogActivity (Java, UI 与生命周期) │
-│  SilentInstallActivity (无窗口入口) · CallerAuthActivity (授权页)    │
+│  SilentInstallActivity (零/短窗口入口) · CallerAuthActivity (授权页) │
 │  StagedFiles + StagedProvider (外部 URI 私有化) · TaskLauncher       │
 │  SilentTask (进程级后台任务) · FloatingIndicator (系统悬浮窗)      │
 │  Notifier (通知) · AppNames (应用名与错误文案)                      │
@@ -57,21 +57,19 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 ### 静默安装流程
 
 - 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `SEND_MULTIPLE` / `DELETE` / `UNINSTALL_PACKAGE`
-  意图由 `SilentInstallActivity` 接管。它**回归 Android 框架原生零窗口契约**：Manifest 直接
-  引用 `@android:style/Theme.NoDisplay`（`windowNoDisplay=true` 让 `ActivityThread` 跳过
-  `wm.addView`），代码里绝不调用 `setContentView` / `getWindow()` / `getDecorView` /
-  `setAttributes` / `setFlags` / `overridePendingTransition`，并在 `onCreate` 内立即
-  `finish()`。**不保留任何 Window 补丁**：曾有 `neutralizeWindow()` 会清除
-  `FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS`，在个别忽略 `windowNoDisplay` 的 ROM 上会让
-  状态栏/导航栏被系统按黑色绘制，而 `Window.setFlags` 在部分实现里还会触发
-  `installDecor`，把零窗口契约破坏掉。
-- 这是多轮实机反馈后的定论。此前自定义主题继承 `NoDisplay` 却又覆盖
-  `windowIsFloating` + `windowIsTranslucent`，floating+translucent 会强制系统创建一个带
-  **半透明背板**的窗口 —— 即反复出现的「一层透明遮罩」；它同时是可聚焦窗口，吞触摸、
-  需按返回才消失。代码里 `hardenWindow()` 调用 `setAttributes` / `setBackgroundDrawable`
-  / `setStatusBarColor` 会 `installDecor` 把窗口激活，而 `makeVisible()` 又依据主题重新
-  生成 LayoutParams，把 1x1 / NOT_TOUCHABLE / 清 DIM 全部覆盖，所以补丁始终无效。
-  正确解法是**不与 ROM 争窗口参数**：原生主题 + 代码不碰 Window，从源头零窗口。
+  意图由 `SilentInstallActivity` 接管。它按「调用方是否等待结果」走两条路径：
+  - **不等待结果**（多数文件管理器 / 分享）：在 `onCreate` 内立即 `finish()`，framework
+    因 `mFinished=true` 跳过 `wm.addView`，代码完全不碰 Window，仍是零窗口；
+  - **等待结果**（`startActivityForResult` 或 `EXTRA_RETURN_RESULT=true`）：使用
+    `@style/SilentEntryTheme` 驻留 `RESULT_DELAY_MS = 1400ms`，期间窗口由
+    `configureWindow()` 压到 1x1、全透明、`FLAG_NOT_FOCUSABLE`、
+    `FLAG_NOT_TOUCHABLE`、无 dim、系统栏透明并保留
+    `FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS`；到期再 `setResult()` + `finish()`。
+- 延迟是为了越过调用方在 MIUI 上的 1 秒「结果忽略窗口」（见下节）。
+  `Theme.NoDisplay` 要求 `onResume` 前 `finish()`、无法驻留，因此改用自定义主题；
+  窗口属性在 `onCreate` / `onResume` / `addView` 后三次申明，防止 ROM 重算覆盖。
+  主题刻意不设 `windowIsFloating` —— floating + translucent 在 MIUI 上会被铺成
+  整屏半透明背板，正是前几轮「一层透明遮罩」的来源。
 
 - **安装链路零窗口**：入口遇到 `ASK` 时不再 `startActivity` 弹任何 dialog —— 那正是
   「一层遮罩弹窗、屏幕点不动」的来源之一（Dialog 窗口在部分 ROM 上会被铺成整屏半透明
@@ -92,15 +90,16 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 - 入口通过 `getCallingActivity()`、`getCallingPackage()`、`getReferrer()` 与
   `EXTRA_REFERRER*` 尽力识别调用方；识别不到一律视为匿名来源。Rust `auth::decide`
   返回 `ALLOW` / `ASK` / `DENY`：
-  - `ALLOW`：直接执行，并回传 `RESULT_OK` 结束调用方的等待；
+  - `ALLOW`：立即启动后台安装，回传 `RESULT_OK`（调用方据此把 UI 更新为「已安装」）；
   - `ASK`：**拦截本次安装**并发「待授权」通知（携带 staged URI），点通知进入授权页勾选
-    「记住」，允许后由授权页继续安装；入口回传 `RESULT_CANCELED`，让等待结果的
-    调用方透明窗口立即退出；
+    「记住」，允许后由授权页继续安装；入口回传 `RESULT_CANCELED` 并附 `CALLER_PENDING`；
   - `DENY`：静默阻止、记一条日志，同样回传 `RESULT_CANCELED`。
   匿名来源**永远不能被永久记住**，否则一次允许会放行后续所有匿名调用。
-- 用户完成授权（或已获授权）后，入口立即销毁，安装交给 `SilentTask` 在应用进程后台线程
-  串行执行。整个安装期间屏幕上只有通知与左上角的小指示器。入口的
-  `intent-filter` 只匹配 APK 相关 MIME，不使用 `*/*`，避免抢走任意 `content://` 意图。
+- 后台任务由 `SilentTask` 在应用进程后台线程串行执行，**安装不等待结果延迟**：
+  通知、进度、悬浮指示器都在 `onCreate` 立即启动。只有「结果回传」会为等待结果的
+  调用方延后 1400ms；其余路径入口立即销毁。整个安装期间屏幕上只有通知与左上角的
+  小指示器。入口的 `intent-filter` 只匹配 APK 相关 MIME，不使用 `*/*`，
+  避免抢走任意 `content://` 意图。
 - 默认不做任何安装前确认：静默入口的 `skipConfirm` 恒为 `true`，
   Rust 侧 `Config::default()` 的 `confirm_before_install` 为 `false`。
 - 通知标题显示应用的**实际名称**（已安装应用名 > APK 内 `application@label` > 清洗后的文件名），
@@ -111,28 +110,39 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
   消失，与「静默」语义直接冲突。确有需要可在设置里打开「失败时自动打开系统安装器」
   （默认关闭，开启时有风险提示）。降级方式会写入安装日志便于排查。
 
-### 调用方结果回传契约（2026-11-07 实机定位）
+### 调用方结果回传契约（2026-11-07 二次实机定位，更正版）
 
-- 现场证据（`adb shell dumpsys window windows` / `dumpsys activity activities` /
-  `uiautomator dump` / `logcat`）：故障时的 `mCurrentFocus` 是**调用方**窗口
-  （本次为 Mihon 的 `eu.kanade.tachiyomi.extension.util.ExtensionInstallActivity`），
-  不是本应用。该窗口 `ty=BASE_APPLICATION`、`fmt=TRANSPARENT`、`(0,0)(fillxfill)`、
-  `mViewVisibility=0x0`、`mHasSurface=true`，视图树只有一个空的
-  `android:id/content`、零个 `clickable` 节点；ActivityRecord 为
-  `state=RESUMED finishing=false`，已停留数分钟。
-- logcat 的 `START ... (rr=<ActivityRecord>)` 表明调用方用 `startActivityForResult`
-  拉起本应用安装入口，并用一个 `windowIsTranslucent=true` 的透明中转 Activity 等待结果；
-  其 `taskDescription.statusBarColor=ff000000`，窗口 flags 缺少
-  `DRAWS_SYSTEM_BAR_BACKGROUNDS` 与 `LIGHT_STATUS_BAR`，因此系统栏被画成黑色。
-- 本应用入口过去从不 `setResult()`，且声明了 `android:noHistory="true"`，结果默认
-  `RESULT_CANCELED`；调用方只在 `RESULT_OK` 时结束自己，于是透明窗口永久停在栈顶 ——
-  看得见下层 UI、触摸被空窗口吞掉、只能按返回键退出。
-- 修复：`SilentInstallActivity` 在所有路径统一 `setResult()` 后再 `finish()`
-  （`ALLOW` → `RESULT_OK`；`ASK` / `DENY` / 异常 → `RESULT_CANCELED` 并附原因），
-  Manifest 移除 `noHistory`。`adb logcat -s SilentEntry` 会打印
-  `decision` / `caller` / `resultTo` / `finish result=...`，便于再次定位。
-- 结论：**零窗口只是必要条件，不是充分条件**。安装器作为 `startActivityForResult`
-  的被调方，必须正确结束调用方的等待，否则「透明弹窗」会以调用方窗口的形式出现。
+> 早期版本曾把根因误判为「没有回传 `RESULT_OK`」。1.0.1 实机复测证明
+> `setResult(RESULT_OK)` 已执行（`finish result=-1 detail=ACCEPTED`，往返 2ms），
+> 弹窗依旧，故该结论作废。以下为修正后的根因与方案。
+
+- 现场证据（`adb shell dumpsys window` / `dumpsys activity activities` /
+  `uiautomator dump` / `logcat`）：`mCurrentFocus` 是**调用方**窗口（Mihon
+  `eu.kanade.tachiyomi.extension.util.ExtensionInstallActivity`），`fmt=TRANSPARENT`、
+  全屏、视图树只有空的 `android:id/content`、零 `clickable`；`state=RESUMED
+  finishing=false` 停留数分钟；`taskDescription.statusBarColor=ff000000` 且窗口缺
+  `DRAWS_SYSTEM_BAR_BACKGROUNDS` → 黑系统栏、触摸被吞、只能按返回键退出。
+- 真根因在调用方源码（`mihonapp/mihon` 的 `ExtensionInstallActivity.kt`）：检测到
+  `hasMiuiPackageInstaller`（设备上存在 `com.miui.packageinstaller`）时，`onCreate` 设
+  `ignoreResult=true` 与 `ignoreUntil = System.nanoTime() + 1s`；`onActivityResult`
+  若在 1 秒内到达，执行 `hasIgnoredResult = true; return` —— **不调用 `finish()`，
+  且判断发生在 resultCode 之前，`RESULT_OK` / `RESULT_CANCELED` 一律被吞**。
+  它只靠后续 `onStart()` 里的 `if (hasIgnoredResult) finish()` 兜底。
+- 零窗口安装器 2ms 内结束，调用方在结果派发时已走完 `onStart/onResume`，此后再无
+  `onStart` → `hasIgnoredResult` 永远不被消费 → 透明窗口永久停留。系统安装器之所以
+  正常，是因为它显示真实界面让调用方进入 stopped，返回时 `onStart()` 会兜底 finish。
+- 修复（方案 A）：把结果回推到 `ignoreUntil` 之后。`RESULT_DELAY_MS = 1400ms`
+  留出 MIUI 调度余量，使 `onActivityResult` 走
+  `checkInstallationResult(resultCode); finish()` 正常分支；`RESULT_OK` 还能让调用方
+  把 UI 更新为「已安装」而非「空闲」。驻留只作用于结果回传，后台安装在 `onCreate`
+  立即开始。
+- 诊断：`adb logcat -s SilentEntry` 会输出 `result delayed 1400ms ...` 与
+  `finish result=-1 ... elapsedMs=140x`，用 `elapsedMs` 确认延迟生效；
+  `adb shell dumpsys window | grep mCurrentFocus` 应看到焦点在结果返回后立即
+  回到调用方主界面，而不是停在透明中转页。
+- 结论：**零窗口与正确回传结果都只是必要条件**。被 `startActivityForResult` 拉起的
+  安装器还必须适配调用方自身的结果处理时序，否则「透明弹窗」会以调用方窗口的形式
+  出现，且单改 resultCode 无效。
 
 ### 调用方授权
 
@@ -156,6 +166,9 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 
 ## 3. 关键实现选择
 
+- **等待结果的调用方走「延迟结果 + 1x1 短窗口」**：`RESULT_DELAY_MS = 1400ms` 越过
+  MIUI 侧 1 秒忽略窗口；窗口属性在 `onCreate` / `onResume` / `addView` 后三次申明，
+  避免 ROM 依据主题重算 LayoutParams。普通调用仍是零窗口，安装任务不等待延迟。
 - **静默安装走 `pm install-create / install-write / install-commit` 会话**，
   首选 `pm install-write -S <size> <session> <name> -` 从 stdin 流式写入。
 - **写入兜底**：若 stdin 写入失败（管道破裂、ROM 对 Shizuku `newProcess` 的 stdin 支持不佳等），

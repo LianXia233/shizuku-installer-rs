@@ -4,9 +4,18 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 
 import org.json.JSONObject;
 
@@ -16,37 +25,29 @@ import java.util.List;
 /**
  * 外部「打开方式 / 分享 / 安装 / 卸载」意图的入口。
  *
- * 零窗口契约（回归 Android 框架原生语义）：
- *  - Manifest 使用 {@code @android:style/Theme.NoDisplay}，其
- *    {@code windowNoDisplay=true} 让 ActivityThread 跳过 {@code wm.addView}；
- *  - 本类绝不调用 {@code setContentView}、{@code getWindow()}、
- *    {@code getDecorView}、{@code setAttributes}、{@code setFlags} 等任何
- *    Window API。曾经存在的 {@code neutralizeWindow()} 会清除
- *    {@code FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS}，一旦 ROM 忽略 windowNoDisplay
- *    而真的创建窗口，系统就会用黑色绘制状态栏/导航栏；且部分 ROM 的
- *    {@code Window.setFlags} 会触发 installDecor，把零窗口契约破坏掉。
- *    因此这里彻底不碰 Window，只依赖框架主题。
+ * 双路径窗口策略（2026-11-07 第二次实机定位后修正）：
+ *  - 普通调用（无需等待结果）：保持原来的零窗口语义——onCreate 内立即
+ *    finish，框架因 mFinished=true 跳过 wm.addView，代码完全不碰 Window。
+ *  - 等待结果的调用（{@code startActivityForResult} / {@code EXTRA_RETURN_RESULT}）：
+ *    改用 {@code @style/SilentEntryTheme} 并驻留 {@link #RESULT_DELAY_MS} 毫秒，
+ *    期间窗口被限制为 1x1、NOT_FOCUSABLE、NOT_TOUCHABLE、无 dim、系统栏透明，
+ *    不遮挡、不抢焦点、不吞触摸；到期后再 setResult + finish。
  *
- * 调用方结果契约（2026-11-07 实机日志定位）：
- *  - 文件管理器、Mihon/Tachiyomi 等调用方普遍用
- *    {@code startActivityForResult(new Intent(ACTION_INSTALL_PACKAGE))} 拉起安装器，
- *    并用一个 {@code windowIsTranslucent=true} 的透明中转 Activity 等待结果
- *    （logcat 中表现为 {@code (rr=<ActivityRecord>)}）。
- *  - 这类中转 Activity 往往只在收到 {@code RESULT_OK} 时才自行 finish。
- *    本入口过去从不调用 {@code setResult()}、又声明了 {@code noHistory=true}，
- *    结果默认是 {@code RESULT_CANCELED}，中转 Activity 便一直停留在 RESUMED：
- *    全屏透明窗口抢走焦点、视图树为空导致触摸无响应、自身不带
- *    {@code DRAWS_SYSTEM_BAR_BACKGROUNDS} 且 taskDescription 为黑色，
- *    于是状态栏/导航栏变黑，用户只能按返回键退出。
- *  - 修复：接管安装后显式 {@code setResult(RESULT_OK)} 再 finish；
- *    拦截/拒绝/异常路径也明确回传 {@code RESULT_CANCELED}，保证调用方
- *    一定能收到回调并关闭自己的透明窗口。Manifest 同时移除 noHistory，
- *    避免框架提前清理 Activity 记录而干扰结果传递。
+ * 为什么要延迟（真正的根因）：
+ *  Mihon/Tachiyomi 的 {@code ExtensionInstallActivity} 在 MIUI 设备上
+ *  （{@code hasMiuiPackageInstaller=true}）会在 onCreate 设置
+ *  {@code ignoreResult=true} 与 {@code ignoreUntil = now + 1s}；其
+ *  {@code onActivityResult} 若在 1 秒内到达，直接
+ *  {@code hasIgnoredResult=true; return} —— 不调用 finish()，且判断发生在
+ *  resultCode 之前，RESULT_OK / RESULT_CANCELED 一律被吞。它只能靠后续
+ *  {@code onStart()} 兜底 finish，而零窗口安装器 2ms 内就结束，调用方
+ *  在结果派发时早已走完 onStart/onResume，此后再无 onStart，
+ *  透明中转窗口便永久停在栈顶（黑系统栏、触摸失效、需按返回键）。
+ *  把结果回推到 1 秒忽略窗口之后，onActivityResult 就会走
+ *  {@code checkInstallationResult(resultCode); finish()} 的正常分支。
  *
- * 本 Activity 只负责三件事，随后立刻 finish：
- *   1. 在仍持有外部 URI 读权限时把安装包复制到应用私有缓存（{@link StagedFiles}）；
- *   2. 识别调用方并查询授权决策；
- *   3. 放行则把安装交给进程级后台任务，需询问则把待安装包交给通知。
+ * 后台安装任务始终在 onCreate 立即启动，延迟只作用于「结果回传」，
+ * 不影响安装开始时间、通知与进度。
  */
 public final class SilentInstallActivity extends Activity {
     private static final String TAG = "SilentEntry";
@@ -59,10 +60,21 @@ public final class SilentInstallActivity extends Activity {
     /** 回传给调用方的结果说明，仅用于调用方自查，不含任何 URI 或用户数据。 */
     private static final String EXTRA_RESULT_DETAIL = "silent_result_detail";
 
+    /**
+     * 调用方 MIUI workaround 的忽略窗口是 1 秒（System.nanoTime 单调时钟）。
+     * 取 1400ms 留出 MIUI 调度与 Activity 启动的余量，确保 onActivityResult
+     * 一定落在 ignoreUntil 之后。
+     */
+    private static final long RESULT_DELAY_MS = 1400L;
+
     private final List<String> uris = new ArrayList<>();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable finishRunnable = this::finishWithResult;
     private boolean valid;
     private boolean uninstall;
     private boolean ended;
+    private boolean delayedResult;
+    private long createdAtMs;
     private String uninstallPkg = "";
     private String label = "安装包";
     private String caller = "@unknown";
@@ -74,17 +86,20 @@ public final class SilentInstallActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // 绝不 setContentView、绝不触碰 Window。Theme.NoDisplay 的
-        // windowNoDisplay=true 让 ActivityThread 跳过 wm.addView，框架层面就没有窗口。
-        // NoDisplay 要求 Activity 在 onResume 之前 finish；用 try/finally 保证
-        // 任何异常路径（坏 Parcelable、通知服务不可用等）都立即销毁并回传结果。
+        createdAtMs = SystemClock.uptimeMillis();
+        delayedResult = callerWaitsForResult();
+        if (delayedResult) {
+            configureWindow();
+            // 部分 ROM 在 makeVisible() 时依据主题重算 LayoutParams，
+            // 窗口 addView 完成后的下一帧再申明一次属性。
+            getWindow().getDecorView().post(this::configureWindow);
+        }
         try {
             Notifier.ensureChannels(this);
             parseIntent(getIntent());
             if (valid) {
-                // 关键：外部 content:// 的读权限只在本 Activity 存活期间有效。
-                // 先复制到自家私有缓存，后台任务全程只读 StagedProvider，不会因
-                // finish 后授权被回收而在 install-write 阶段抛 SecurityException。
+                // 外部 content:// 的读权限只在本 Activity 存活期间有效，
+                // 必须趁 onCreate 阶段复制到自家 StagedProvider。
                 if (!uninstall) {
                     List<String> staged = StagedFiles.stage(this, uris);
                     uris.clear();
@@ -98,8 +113,107 @@ public final class SilentInstallActivity extends Activity {
             resultCode = RESULT_CANCELED;
             resultDetail = "ENTRY_ERROR";
         } finally {
-            finishWithResult();
+            scheduleResult();
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (delayedResult) {
+            configureWindow();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        // 极端情况下 ROM 仍把返回键送给本窗口：也要保证结果被回传。
+        finishWithResult();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        mainHandler.removeCallbacks(finishRunnable);
+    }
+
+    // ---------------------------------------------------------------- 窗口与结果
+
+    /** 只有明确等待结果的调用方才需要短窗口驻留，其余保持零窗口。 */
+    private boolean callerWaitsForResult() {
+        Intent i = getIntent();
+        boolean extra = i != null && i.getBooleanExtra(Intent.EXTRA_RETURN_RESULT, false);
+        return extra || getCallingActivity() != null;
+    }
+
+    /**
+     * 把短窗口压到用户完全无感：1x1、左上角、不聚焦、不可触摸、无 dim，
+     * 背景与系统栏全部透明并保留 DRAWS_SYSTEM_BAR_BACKGROUNDS，
+     * 避免系统按黑色 taskDescription 绘制状态栏/导航栏。
+     */
+    private void configureWindow() {
+        try {
+            Window w = getWindow();
+            if (w == null) {
+                return;
+            }
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.width = 1;
+            lp.height = 1;
+            lp.gravity = Gravity.TOP | Gravity.START;
+            lp.x = 0;
+            lp.y = 0;
+            lp.dimAmount = 0f;
+            lp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS;
+            lp.flags &= ~WindowManager.LayoutParams.FLAG_DIM_BEHIND;
+            w.setAttributes(lp);
+            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            w.setStatusBarColor(Color.TRANSPARENT);
+            w.setNavigationBarColor(Color.TRANSPARENT);
+            w.setDimAmount(0f);
+            View decor = w.getDecorView();
+            decor.setBackgroundColor(Color.TRANSPARENT);
+            decor.setVisibility(View.VISIBLE);
+        } catch (Throwable t) {
+            Log.w(TAG, "configureWindow failed", t);
+        }
+    }
+
+    private void scheduleResult() {
+        if (!delayedResult) {
+            finishWithResult();
+            return;
+        }
+        Log.i(TAG, "result delayed " + RESULT_DELAY_MS + "ms"
+                + " code=" + resultCode + " detail=" + resultDetail
+                + " resultTo=" + safeCallingActivity());
+        mainHandler.postDelayed(finishRunnable, RESULT_DELAY_MS);
+    }
+
+    /**
+     * 所有路径的唯一收口：先回传结果，再 finish。
+     * 绝不调用 overridePendingTransition 等窗口转场 API。
+     */
+    private void finishWithResult() {
+        if (ended) {
+            return;
+        }
+        ended = true;
+        mainHandler.removeCallbacks(finishRunnable);
+        try {
+            Intent data = new Intent();
+            data.putExtra(EXTRA_RESULT_DETAIL, resultDetail);
+            setResult(resultCode, data);
+        } catch (Throwable t) {
+            Log.w(TAG, "setResult failed", t);
+        }
+        Log.i(TAG, "finish result=" + resultCode + " detail=" + resultDetail
+                + " caller=" + caller + " resultTo=" + safeCallingActivity()
+                + " elapsedMs=" + (SystemClock.uptimeMillis() - createdAtMs));
+        finish();
     }
 
     // ---------------------------------------------------------------- 意图解析
@@ -161,8 +275,7 @@ public final class SilentInstallActivity extends Activity {
     private String resolveCaller(Intent i) {
         String self = getPackageName();
         List<String> candidates = new ArrayList<>();
-        // startActivityForResult 场景下这是最可靠、由框架背书的来源，
-        // 优先于 getCallingPackage() 与 referrer。
+        // startActivityForResult 场景下这是最可靠、由框架背书的来源。
         ComponentName callingActivity = getCallingActivity();
         if (callingActivity != null) {
             candidates.add(callingActivity.getPackageName());
@@ -246,8 +359,6 @@ public final class SilentInstallActivity extends Activity {
             callerLabel = AppNames.labelForCaller(this, caller);
         }
         String decision = d == null ? "ASK" : d.optString("decision", "ASK");
-        // 诊断日志：adb logcat -s SilentEntry 可直接看到决策、调用方以及
-        // 是否存在等待结果的 resultTo，用于定位「调用方透明窗口不退场」。
         Log.i(TAG, "decision=" + decision + " caller=" + caller
                 + " resultTo=" + safeCallingActivity() + " valid=" + valid);
 
@@ -256,18 +367,12 @@ public final class SilentInstallActivity extends Activity {
             resultCode = RESULT_CANCELED;
             resultDetail = "CALLER_DENIED";
         } else if ("ASK".equals(decision)) {
-            // 安装链路绝不创建任何窗口：未授权调用只发一条通知。
-            // 但必须把已私有化的安装包随通知一并交给授权页，否则用户点通知
-            // 只能完成授权、本次安装被白白丢弃，需要回到原应用重新发起。
             DenyLog.record(App.context(), uninstall, label, caller, callerLabel, "ask");
             Notifier.authPending(App.context(), label, caller, callerLabel,
                     new ArrayList<>(uris), uninstall, uninstallPkg);
             resultCode = RESULT_CANCELED;
             resultDetail = "CALLER_PENDING";
         } else {
-            // 关键：调用方常用 startActivityForResult 拉起本入口，并只有收到
-            // RESULT_OK 才结束自己的透明中转 Activity。不显式 setResult 会让
-            // 那个窗口一直停留在栈顶，表现为「透明遮罩、点不动、只能按返回」。
             TaskLauncher.launch(this, uninstall, uris, uninstallPkg, caller, label);
             resultCode = RESULT_OK;
             resultDetail = "ACCEPTED";
@@ -290,28 +395,5 @@ public final class SilentInstallActivity extends Activity {
     private String safeCallingActivity() {
         ComponentName c = getCallingActivity();
         return c == null ? "none" : c.flattenToShortString();
-    }
-
-    /**
-     * 所有路径的唯一收口：先回传结果，再 finish。
-     *
-     * 绝不调用 overridePendingTransition 等任何窗口转场 API：
-     * Theme.NoDisplay 下框架未 addView，无需转场，也避免触碰 decor。
-     */
-    private void finishWithResult() {
-        if (ended) {
-            return;
-        }
-        ended = true;
-        try {
-            Intent data = new Intent();
-            data.putExtra(EXTRA_RESULT_DETAIL, resultDetail);
-            setResult(resultCode, data);
-        } catch (Throwable t) {
-            Log.w(TAG, "setResult failed", t);
-        }
-        Log.i(TAG, "finish result=" + resultCode + " detail=" + resultDetail
-                + " caller=" + caller + " resultTo=" + safeCallingActivity());
-        finish();
     }
 }
