@@ -15,7 +15,7 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 ```
 ┌──────────────────────────── Android App ────────────────────────────┐
 │  MainActivity / SettingsActivity / LogActivity (Java, UI 与生命周期) │
-│  SilentInstallActivity (无窗口入口) · CallerAuthActivity (授权卡片)  │
+│  SilentInstallActivity (无窗口入口) · CallerAuthActivity (授权页)    │
 │  StagedFiles + StagedProvider (外部 URI 私有化) · TaskLauncher       │
 │  SilentTask (进程级后台任务) · FloatingIndicator (系统悬浮窗)      │
 │  Notifier (通知) · AppNames (应用名与错误文案)                      │
@@ -48,7 +48,7 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 | F-04 | 免确认包名白名单；安装前确认为可选开关（默认关闭） | `config.rs`, `SettingsActivity` |
 | F-05 | 通知气泡显示安装中 / 进度 / 结果，一键启动、查看日志 | `Notifier`, `SilentTask` |
 | F-06 | 安装日志：自动记录、历史查看、导出分享、清空 | `logbook.rs`, `InstallLogStore`, `LogActivity` |
-| F-07 | **调用方授权**：外部应用首次调用弹窗询问，设置页可勾选允许哪些应用 | `auth.rs`, `CallerAuthActivity`, `SettingsActivity` |
+| F-07 | **调用方授权**：外部应用首次调用只发待授权通知（不弹窗），授权后继续本次安装；设置页可勾选允许哪些应用 | `auth.rs`, `CallerAuthActivity`, `Notifier`, `SettingsActivity` |
 | F-08 | **无遮罩后台指示**：左上角科幻风旋转指示器，点击穿透、不染黑系统栏；悬浮窗权限可由 Shizuku 自动开启 | `FloatingIndicator`, `SciFiSpinner` |
 | F-09 | **失败降级（默认不打断）**：静默安装失败时只发一条可点击通知，点通知才进系统安装器；可显式开启「自动打开」 | `SilentTask`, `Notifier`, `Config` |
 | F-10 | **中文展示**：通知、日志、错误原因显示应用实际名称与中文说明 | `AppNames`, `apk_meta.rs`, `util.rs`, `logbook.rs` |
@@ -59,10 +59,12 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
 - 外部 `VIEW` / `INSTALL_PACKAGE` / `SEND` / `SEND_MULTIPLE` / `DELETE` / `UNINSTALL_PACKAGE`
   意图由 `SilentInstallActivity` 接管。它**回归 Android 框架原生零窗口契约**：Manifest 直接
   引用 `@android:style/Theme.NoDisplay`（`windowNoDisplay=true` 让 `ActivityThread` 跳过
-  `wm.addView`），代码里绝不调用 `setContentView` / `getDecorView` / `setAttributes` /
-  `overridePendingTransition`，并在 `onCreate` 内立即 `finish()`。仅保留一处
-  `Window.setFlags` 兜底（只写 LayoutParams、不触发 `installDecor`），用于个别忽略
-  `windowNoDisplay` 的 ROM。
+  `wm.addView`），代码里绝不调用 `setContentView` / `getWindow()` / `getDecorView` /
+  `setAttributes` / `setFlags` / `overridePendingTransition`，并在 `onCreate` 内立即
+  `finish()`。**不保留任何 Window 补丁**：曾有 `neutralizeWindow()` 会清除
+  `FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS`，在个别忽略 `windowNoDisplay` 的 ROM 上会让
+  状态栏/导航栏被系统按黑色绘制，而 `Window.setFlags` 在部分实现里还会触发
+  `installDecor`，把零窗口契约破坏掉。
 - 这是多轮实机反馈后的定论。此前自定义主题继承 `NoDisplay` 却又覆盖
   `windowIsFloating` + `windowIsTranslucent`，floating+translucent 会强制系统创建一个带
   **半透明背板**的窗口 —— 即反复出现的「一层透明遮罩」；它同时是可聚焦窗口，吞触摸、
@@ -70,27 +72,35 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
   / `setStatusBarColor` 会 `installDecor` 把窗口激活，而 `makeVisible()` 又依据主题重新
   生成 LayoutParams，把 1x1 / NOT_TOUCHABLE / 清 DIM 全部覆盖，所以补丁始终无效。
   正确解法是**不与 ROM 争窗口参数**：原生主题 + 代码不碰 Window，从源头零窗口。
+
 - **安装链路零窗口**：入口遇到 `ASK` 时不再 `startActivity` 弹任何 dialog —— 那正是
-  「一层遮罩弹窗、屏幕点不动」的最后来源（Dialog 窗口在部分 ROM 上会被铺成整屏半透明
-  背板并抢焦点）。未授权调用改为「拦截本次 + 发一条待授权通知」，用户点通知才进入授权页。
+  「一层遮罩弹窗、屏幕点不动」的来源之一（Dialog 窗口在部分 ROM 上会被铺成整屏半透明
+  背板并抢焦点）。未授权调用改为「拦截本次 + 发一条待授权通知」，用户点通知才进入授权页；
+  通知同时携带已私有化的安装包，授权后可直接继续本次安装，不再白白丢包。
 - 授权页 `CallerAuthActivity` 因此改成了**普通不透明页面**（`@style/AppTheme`），不再使用
   Dialog 主题，也不带 `dim`，不存在任何浮层；且它已完全脱离安装链路，安装过程中屏幕上
   不可能出现由本应用创建的窗口。
 - 「按返回才能继续操作」是**顶层存在可聚焦窗口**的确定信号：系统悬浮窗是
   `FLAG_NOT_FOCUSABLE`，按返回不会作用于它；只有 Activity 窗口会接收返回键。
-  因此静默链路在正常路径上不启动任何 Activity —— 失败降级默认也只发通知。
+  该窗口**未必属于本应用** —— 调用方等待结果的透明中转 Activity 同样满足全部症状，
+  因此排查必须先看 `mCurrentFocus` 的属主，不能只审计自己的主题。
+  静默链路在正常路径上不启动任何 Activity —— 失败降级默认也只发通知。
 - **外部 URI 私有化**：调用方通过 `FLAG_GRANT_READ_URI_PERMISSION` 授予的读权限只在其
   Intent 对应的 Activity 存活期间有效。入口在仍持有权限时把安装包复制到应用私有缓存，
   并由自家只读 `StagedProvider` 暴露；后台任务全程只读这个 URI，不会因 Activity 销毁、
   授权被回收而在写入阶段失败。降级到系统安装器时也通过临时授权安全地传同一个 URI。
-- 入口通过 `getCallingPackage()`、`getReferrer()` 与 `EXTRA_REFERRER*` 尽力识别调用方；
-  识别不到一律视为匿名来源。Rust `auth::decide` 返回 `ALLOW` / `ASK` / `DENY`：
-  - `ALLOW`：直接执行；
-  - `ASK`：**拦截本次安装**并发「待授权」通知，点通知进入授权页勾选「记住」；
-  - `DENY`：静默阻止并记一条日志。
+- 入口通过 `getCallingActivity()`、`getCallingPackage()`、`getReferrer()` 与
+  `EXTRA_REFERRER*` 尽力识别调用方；识别不到一律视为匿名来源。Rust `auth::decide`
+  返回 `ALLOW` / `ASK` / `DENY`：
+  - `ALLOW`：直接执行，并回传 `RESULT_OK` 结束调用方的等待；
+  - `ASK`：**拦截本次安装**并发「待授权」通知（携带 staged URI），点通知进入授权页勾选
+    「记住」，允许后由授权页继续安装；入口回传 `RESULT_CANCELED`，让等待结果的
+    调用方透明窗口立即退出；
+  - `DENY`：静默阻止、记一条日志，同样回传 `RESULT_CANCELED`。
   匿名来源**永远不能被永久记住**，否则一次允许会放行后续所有匿名调用。
 - 用户完成授权（或已获授权）后，入口立即销毁，安装交给 `SilentTask` 在应用进程后台线程
-  串行执行。整个安装期间屏幕上只有通知与左上角的小指示器。
+  串行执行。整个安装期间屏幕上只有通知与左上角的小指示器。入口的
+  `intent-filter` 只匹配 APK 相关 MIME，不使用 `*/*`，避免抢走任意 `content://` 意图。
 - 默认不做任何安装前确认：静默入口的 `skipConfirm` 恒为 `true`，
   Rust 侧 `Config::default()` 的 `confirm_before_install` 为 `false`。
 - 通知标题显示应用的**实际名称**（已安装应用名 > APK 内 `application@label` > 清洗后的文件名），
@@ -100,6 +110,29 @@ PackageInstaller 会话，安装 / 卸载应用时无需拉起系统安装界面
   系统安装器 / 选择器是可聚焦窗口，会覆盖前台应用、把状态栏与导航栏染黑，且不按返回不会
   消失，与「静默」语义直接冲突。确有需要可在设置里打开「失败时自动打开系统安装器」
   （默认关闭，开启时有风险提示）。降级方式会写入安装日志便于排查。
+
+### 调用方结果回传契约（2026-11-07 实机定位）
+
+- 现场证据（`adb shell dumpsys window windows` / `dumpsys activity activities` /
+  `uiautomator dump` / `logcat`）：故障时的 `mCurrentFocus` 是**调用方**窗口
+  （本次为 Mihon 的 `eu.kanade.tachiyomi.extension.util.ExtensionInstallActivity`），
+  不是本应用。该窗口 `ty=BASE_APPLICATION`、`fmt=TRANSPARENT`、`(0,0)(fillxfill)`、
+  `mViewVisibility=0x0`、`mHasSurface=true`，视图树只有一个空的
+  `android:id/content`、零个 `clickable` 节点；ActivityRecord 为
+  `state=RESUMED finishing=false`，已停留数分钟。
+- logcat 的 `START ... (rr=<ActivityRecord>)` 表明调用方用 `startActivityForResult`
+  拉起本应用安装入口，并用一个 `windowIsTranslucent=true` 的透明中转 Activity 等待结果；
+  其 `taskDescription.statusBarColor=ff000000`，窗口 flags 缺少
+  `DRAWS_SYSTEM_BAR_BACKGROUNDS` 与 `LIGHT_STATUS_BAR`，因此系统栏被画成黑色。
+- 本应用入口过去从不 `setResult()`，且声明了 `android:noHistory="true"`，结果默认
+  `RESULT_CANCELED`；调用方只在 `RESULT_OK` 时结束自己，于是透明窗口永久停在栈顶 ——
+  看得见下层 UI、触摸被空窗口吞掉、只能按返回键退出。
+- 修复：`SilentInstallActivity` 在所有路径统一 `setResult()` 后再 `finish()`
+  （`ALLOW` → `RESULT_OK`；`ASK` / `DENY` / 异常 → `RESULT_CANCELED` 并附原因），
+  Manifest 移除 `noHistory`。`adb logcat -s SilentEntry` 会打印
+  `decision` / `caller` / `resultTo` / `finish result=...`，便于再次定位。
+- 结论：**零窗口只是必要条件，不是充分条件**。安装器作为 `startActivityForResult`
+  的被调方，必须正确结束调用方的等待，否则「透明弹窗」会以调用方窗口的形式出现。
 
 ### 调用方授权
 
@@ -182,7 +215,7 @@ CI 见 `.github/workflows/build.yml`。
    若设备限制导致失败可手动开启。未开启时安装照常进行，仅以通知反馈进度，
    绝不会遮挡屏幕或切换应用。
 4. 从文件管理器用「打开方式 / 分享」把 APK 交给本应用：已授权来源直接后台执行，
-   首次调用会弹一张小卡片询问是否允许，之后不再打扰。
+   首次调用只发一条「待授权」通知，点通知进入普通页面确认，之后不再打扰。
 5. 安装期间停留在当前应用，通知栏显示「XXX 正在安装中」及进度，
    屏幕左上角有一个小旋转指示器；不会跳到主界面。
 6. 安装结果更新同一条通知；成功可一键启动，失败显示中文原因，

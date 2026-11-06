@@ -13,6 +13,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+
 /**
  * 轻量反馈通道：安装中以 heads-up 气泡显示进度，完成后把同一条通知更新为结果。
  * 不创建 Activity、不启动任何界面；未授予通知权限时降级为短暂文本提示。
@@ -167,8 +169,14 @@ final class Notifier {
      * 安装过程中不启动任何 Activity —— 用户点通知才打开授权页（普通不透明页面），
      * 这是「安装链路零窗口」契约的核心。@unknown 恒返回 ASK 且不可记住，
      * 若在入口里弹 dialog，等于每次安装都往屏幕上盖一层窗口。
+     *
+     * 通知必须带上已私有化的安装包：过去只传 caller 与 label，用户点通知
+     * 进入授权页后 uris 为空，只能完成授权、本次安装被丢弃，还得回到原应用
+     * 重新发起一次。现在授权页拿到同样的 staged URI 后可直接继续安装。
      */
-    static void authPending(Context c, String label, String caller, String callerLabel) {
+    static void authPending(Context c, String label, String caller, String callerLabel,
+                            ArrayList<String> uris, boolean uninstall,
+                            String uninstallPkg) {
         ensureChannels(c);
         String who = callerLabel == null || callerLabel.trim().isEmpty()
                 ? c.getString(R.string.caller_unknown) : callerLabel.trim();
@@ -182,9 +190,18 @@ final class Notifier {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 .putExtra(SilentInstallActivity.EXTRA_CALLER, caller)
                 .putExtra(SilentInstallActivity.EXTRA_CALLER_LABEL, who)
-                .putExtra(SilentInstallActivity.EXTRA_LABEL, label);
+                .putExtra(SilentInstallActivity.EXTRA_LABEL, label)
+                .putExtra(SilentInstallActivity.EXTRA_UNINSTALL, uninstall)
+                .putExtra(SilentInstallActivity.EXTRA_UNINSTALL_PKG,
+                        uninstallPkg == null ? "" : uninstallPkg);
+        if (uris != null && !uris.isEmpty()) {
+            auth.putStringArrayListExtra(SilentInstallActivity.EXTRA_URIS,
+                    new ArrayList<>(uris));
+        }
+        // CANCEL_CURRENT 保证每次通知携带的安装包信息都是最新的，
+        // 不会复用上一次留下的旧 staged URI。
         PendingIntent pi = PendingIntent.getActivity(c, 41, auth,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_CANCEL_CURRENT);
         post(c, builder(c, CH_RESULT)
                 .setSmallIcon(R.drawable.ic_action_notification)
                 .setContentTitle(title)

@@ -2,12 +2,11 @@ package io.github.lianxia233.shizukuinst;
 
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.Window;
-import android.view.WindowManager;
 
 import org.json.JSONObject;
 
@@ -17,26 +16,37 @@ import java.util.List;
 /**
  * 外部「打开方式 / 分享 / 安装 / 卸载」意图的入口。
  *
- * 零窗口契约（回归 Android 框架原生语义，不再与 ROM 争窗口参数）：
+ * 零窗口契约（回归 Android 框架原生语义）：
  *  - Manifest 使用 {@code @android:style/Theme.NoDisplay}，其
  *    {@code windowNoDisplay=true} 让 ActivityThread 跳过 {@code wm.addView}；
- *  - 本类绝不调用 {@code setContentView}、{@code getDecorView}、
- *    {@code setAttributes} 或任何 installDecor 触发点。一旦 installDecor，
- *    就会把一个本不该存在的窗口激活出来；而 makeVisible() 又会依据主题重新
- *    生成 LayoutParams，使代码里设置的尺寸与 flags 全部失效。
- *  - 仅保留一处 {@code Window.setFlags} 兜底（见 {@link #neutralizeWindow()}），
- *    它只写 LayoutParams、不触发 installDecor，用于个别忽略 windowNoDisplay 的 ROM。
- *  - 因此屏幕上不存在任何本应用的窗口：没有透明遮罩、没有可聚焦窗口、
- *    不吞触摸、不染黑系统栏、不需要按返回键。
+ *  - 本类绝不调用 {@code setContentView}、{@code getWindow()}、
+ *    {@code getDecorView}、{@code setAttributes}、{@code setFlags} 等任何
+ *    Window API。曾经存在的 {@code neutralizeWindow()} 会清除
+ *    {@code FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS}，一旦 ROM 忽略 windowNoDisplay
+ *    而真的创建窗口，系统就会用黑色绘制状态栏/导航栏；且部分 ROM 的
+ *    {@code Window.setFlags} 会触发 installDecor，把零窗口契约破坏掉。
+ *    因此这里彻底不碰 Window，只依赖框架主题。
  *
- * 之前四轮（全屏 translucent、不透明 1x1、floating translucent、代码加固）
- * 都失败，根因正是自定义主题覆盖了 windowIsFloating/windowIsTranslucent，
- * floating + translucent 强制系统创建带半透明背板的窗口 —— 即那层「透明遮罩」。
+ * 调用方结果契约（2026-11-07 实机日志定位）：
+ *  - 文件管理器、Mihon/Tachiyomi 等调用方普遍用
+ *    {@code startActivityForResult(new Intent(ACTION_INSTALL_PACKAGE))} 拉起安装器，
+ *    并用一个 {@code windowIsTranslucent=true} 的透明中转 Activity 等待结果
+ *    （logcat 中表现为 {@code (rr=<ActivityRecord>)}）。
+ *  - 这类中转 Activity 往往只在收到 {@code RESULT_OK} 时才自行 finish。
+ *    本入口过去从不调用 {@code setResult()}、又声明了 {@code noHistory=true}，
+ *    结果默认是 {@code RESULT_CANCELED}，中转 Activity 便一直停留在 RESUMED：
+ *    全屏透明窗口抢走焦点、视图树为空导致触摸无响应、自身不带
+ *    {@code DRAWS_SYSTEM_BAR_BACKGROUNDS} 且 taskDescription 为黑色，
+ *    于是状态栏/导航栏变黑，用户只能按返回键退出。
+ *  - 修复：接管安装后显式 {@code setResult(RESULT_OK)} 再 finish；
+ *    拦截/拒绝/异常路径也明确回传 {@code RESULT_CANCELED}，保证调用方
+ *    一定能收到回调并关闭自己的透明窗口。Manifest 同时移除 noHistory，
+ *    避免框架提前清理 Activity 记录而干扰结果传递。
  *
  * 本 Activity 只负责三件事，随后立刻 finish：
  *   1. 在仍持有外部 URI 读权限时把安装包复制到应用私有缓存（{@link StagedFiles}）；
  *   2. 识别调用方并查询授权决策；
- *   3. 放行则把安装交给进程级后台任务，需询问则转发给 {@link CallerAuthActivity}。
+ *   3. 放行则把安装交给进程级后台任务，需询问则把待安装包交给通知。
  */
 public final class SilentInstallActivity extends Activity {
     private static final String TAG = "SilentEntry";
@@ -46,6 +56,8 @@ public final class SilentInstallActivity extends Activity {
     static final String EXTRA_LABEL = "label";
     static final String EXTRA_UNINSTALL = "uninstall";
     static final String EXTRA_UNINSTALL_PKG = "uninstall_pkg";
+    /** 回传给调用方的结果说明，仅用于调用方自查，不含任何 URI 或用户数据。 */
+    private static final String EXTRA_RESULT_DETAIL = "silent_result_detail";
 
     private final List<String> uris = new ArrayList<>();
     private boolean valid;
@@ -55,15 +67,17 @@ public final class SilentInstallActivity extends Activity {
     private String label = "安装包";
     private String caller = "@unknown";
     private String callerLabel = "";
+    /** 默认取消：任何未走到 ALLOW 的路径都必须给调用方一个明确回调。 */
+    private int resultCode = RESULT_CANCELED;
+    private String resultDetail = "NOT_HANDLED";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // 绝不 setContentView、绝不 getDecorView()/installDecor()。Theme.NoDisplay 的
+        // 绝不 setContentView、绝不触碰 Window。Theme.NoDisplay 的
         // windowNoDisplay=true 让 ActivityThread 跳过 wm.addView，框架层面就没有窗口。
-        neutralizeWindow();
         // NoDisplay 要求 Activity 在 onResume 之前 finish；用 try/finally 保证
-        // 任何异常路径（坏 Parcelable、通知服务不可用等）都立即销毁。
+        // 任何异常路径（坏 Parcelable、通知服务不可用等）都立即销毁并回传结果。
         try {
             Notifier.ensureChannels(this);
             parseIntent(getIntent());
@@ -81,41 +95,10 @@ public final class SilentInstallActivity extends Activity {
             }
         } catch (Throwable t) {
             Log.w(TAG, "silent entry failed", t);
+            resultCode = RESULT_CANCELED;
+            resultDetail = "ENTRY_ERROR";
         } finally {
-            finishQuietly();
-        }
-    }
-
-    /**
-     * 纯 flags 兜底：只改窗口属性，绝不触碰 decor。
-     *
-     * {@code Window.setFlags} / {@code setDimAmount} 只写
-     * {@code WindowManager.LayoutParams}，不会触发 {@code installDecor()}，
-     * 因此不会把 NoDisplay 的「零窗口」契约破坏掉：
-     *  - 框架遵守 windowNoDisplay 时不 addView，本方法实际上是无副作用的空操作；
-     *  - 个别忽略 windowNoDisplay 的 ROM 真建了窗口时，addView 用的是
-     *    {@code getWindow().getAttributes()}，这里的 NOT_FOCUSABLE /
-     *    NOT_TOUCHABLE / 清 DIM 会生效，窗口既不抢焦点、不吞触摸、也不带暗色遮罩，
-     *    用户感知不到一层「透明遮罩」，也不需要按返回键。
-     */
-    private void neutralizeWindow() {
-        try {
-            Window w = getWindow();
-            if (w == null) {
-                return;
-            }
-            w.setFlags(
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                            | WindowManager.LayoutParams.FLAG_DIM_BEHIND
-                            | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-            w.setDimAmount(0f);
-        } catch (Throwable ignored) {
-            // ROM 限制时忽略；NoDisplay 本身仍保证不创建窗口。
+            finishWithResult();
         }
     }
 
@@ -178,6 +161,12 @@ public final class SilentInstallActivity extends Activity {
     private String resolveCaller(Intent i) {
         String self = getPackageName();
         List<String> candidates = new ArrayList<>();
+        // startActivityForResult 场景下这是最可靠、由框架背书的来源，
+        // 优先于 getCallingPackage() 与 referrer。
+        ComponentName callingActivity = getCallingActivity();
+        if (callingActivity != null) {
+            candidates.add(callingActivity.getPackageName());
+        }
         String calling = getCallingPackage();
         if (calling != null) {
             candidates.add(calling);
@@ -257,27 +246,31 @@ public final class SilentInstallActivity extends Activity {
             callerLabel = AppNames.labelForCaller(this, caller);
         }
         String decision = d == null ? "ASK" : d.optString("decision", "ASK");
+        // 诊断日志：adb logcat -s SilentEntry 可直接看到决策、调用方以及
+        // 是否存在等待结果的 resultTo，用于定位「调用方透明窗口不退场」。
+        Log.i(TAG, "decision=" + decision + " caller=" + caller
+                + " resultTo=" + safeCallingActivity() + " valid=" + valid);
+
         if ("DENY".equals(decision)) {
             DenyLog.record(App.context(), uninstall, label, caller, callerLabel);
-            finishQuietly();
+            resultCode = RESULT_CANCELED;
+            resultDetail = "CALLER_DENIED";
         } else if ("ASK".equals(decision)) {
-            // 安装链路绝不创建任何窗口。
-            //
-            // 历史教训（第五轮实机反馈）：这里曾 startActivity 弹出 CallerAuthActivity
-            // 的 dialog，用户看到的是「一层遮罩弹窗、屏幕不能触摸」——即使我们把
-            // dim 关掉、把窗口限制成 WRAP_CONTENT，部分 ROM 仍会把 dialog 的
-            // decor 铺成整屏半透明背板并抢走焦点。@unknown 恒返回 ASK 且不可记住，
-            // 于是每次安装都会命中该分支，遮罩反复出现。
-            //
-            // 结论：安装过程中不允许出现任何由本应用创建的窗口。未授权的调用改为
-            // 「拒绝本次 + 发一条待授权通知」，用户点通知才进入授权页（那是用户
-            // 主动打开的普通页面，与静默链路完全解耦）。
+            // 安装链路绝不创建任何窗口：未授权调用只发一条通知。
+            // 但必须把已私有化的安装包随通知一并交给授权页，否则用户点通知
+            // 只能完成授权、本次安装被白白丢弃，需要回到原应用重新发起。
             DenyLog.record(App.context(), uninstall, label, caller, callerLabel, "ask");
-            Notifier.authPending(App.context(), label, caller, callerLabel);
-            finishQuietly();
+            Notifier.authPending(App.context(), label, caller, callerLabel,
+                    new ArrayList<>(uris), uninstall, uninstallPkg);
+            resultCode = RESULT_CANCELED;
+            resultDetail = "CALLER_PENDING";
         } else {
+            // 关键：调用方常用 startActivityForResult 拉起本入口，并只有收到
+            // RESULT_OK 才结束自己的透明中转 Activity。不显式 setResult 会让
+            // 那个窗口一直停留在栈顶，表现为「透明遮罩、点不动、只能按返回」。
             TaskLauncher.launch(this, uninstall, uris, uninstallPkg, caller, label);
-            finishQuietly();
+            resultCode = RESULT_OK;
+            resultDetail = "ACCEPTED";
         }
     }
 
@@ -294,13 +287,31 @@ public final class SilentInstallActivity extends Activity {
         }
     }
 
-    private void finishQuietly() {
+    private String safeCallingActivity() {
+        ComponentName c = getCallingActivity();
+        return c == null ? "none" : c.flattenToShortString();
+    }
+
+    /**
+     * 所有路径的唯一收口：先回传结果，再 finish。
+     *
+     * 绝不调用 overridePendingTransition 等任何窗口转场 API：
+     * Theme.NoDisplay 下框架未 addView，无需转场，也避免触碰 decor。
+     */
+    private void finishWithResult() {
         if (ended) {
             return;
         }
         ended = true;
-        // 只 finish，不调用 overridePendingTransition 等任何窗口转场 API：
-        // Theme.NoDisplay 下框架未 addView，无需转场，也避免触碰 decor。
+        try {
+            Intent data = new Intent();
+            data.putExtra(EXTRA_RESULT_DETAIL, resultDetail);
+            setResult(resultCode, data);
+        } catch (Throwable t) {
+            Log.w(TAG, "setResult failed", t);
+        }
+        Log.i(TAG, "finish result=" + resultCode + " detail=" + resultDetail
+                + " caller=" + caller + " resultTo=" + safeCallingActivity());
         finish();
     }
 }

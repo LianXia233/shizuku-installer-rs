@@ -65,18 +65,25 @@
 
           直接使用框架 android:style/Theme.NoDisplay：它的 windowNoDisplay=true
           会让 ActivityThread 在 handleResumeActivity 时跳过 wm.addView，从源头
-          不创建任何窗口。这是唯一能杜绝「透明遮罩 / 可聚焦窗口 / 黑系统栏」的做法。
+          不创建任何窗口。绝不在自定义主题里覆盖 windowIsFloating /
+          windowIsTranslucent，也绝不在代码里调用任何 Window API：
+          setFlags 清除 FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS 会在 ROM 真的建窗口时
+          把状态栏/导航栏染黑，setAttributes 等还会 installDecor 激活窗口。
 
-          绝不在本应用自定义主题里覆盖 windowIsFloating / windowIsTranslucent：
-          floating+translucent 会强制系统创建带半透明背板的窗口，且 decor 一旦
-          被创建，代码里 setAttributes 的 1x1 / NOT_TOUCHABLE / 清 DIM 都会被
-          PhoneWindow.makeVisible() 依据主题重新生成的 LayoutParams 覆盖掉。
+          刻意不声明 android:noHistory：调用方普遍用 startActivityForResult
+          拉起本入口（logcat 中可见 (rr=<ActivityRecord>)），需要一个正常的
+          ActivityRecord 来承载并回传结果；入口已在 onCreate 内自行 finish，
+          配合 excludeFromRecents / autoRemoveFromRecents 不会留在最近任务。
+          若调用方是等待 RESULT_OK 的透明中转 Activity，不回传结果就会让它
+          永久停在栈顶，形成「透明遮罩 + 黑系统栏 + 触摸失效」。
+
+          intent-filter 只匹配 APK 相关 MIME，不使用 */* ，避免把任意
+          content:// 意图都抢过来。
         -->
         <activity
             android:name=".SilentInstallActivity"
             android:exported="true"
             android:theme="@android:style/Theme.NoDisplay"
-            android:noHistory="true"
             android:excludeFromRecents="true"
             android:autoRemoveFromRecents="true"
             android:taskAffinity=""
@@ -92,7 +99,6 @@
                 <data android:scheme="file" />
                 <data android:mimeType="application/vnd.android.package-archive" />
                 <data android:mimeType="application/octet-stream" />
-                <data android:mimeType="*/*" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.DELETE" />
